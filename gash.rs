@@ -44,70 +44,25 @@ trait Command {
 }
 
 impl Process {
-    fn new(cmd_line: &str) -> Process {
-        let mut argv: ~[~str] =
-            cmd_line.split(' ').filter_map(|x| if x != "" 
-                { 
-                    Some(x.to_owned()) 
-                }
-                else { 
-                    None 
-                }).to_owned_vec();
-        let mut cmd = Process {
-            command: "".to_owned(),
-            args: argv.to_owned(),
+    fn new(program: &str, args: ~[~str]) -> Process {
+        let cmd = Process {
+            command: program.to_owned(),
+            args: args.to_owned(),
             exit_status: None,
         };
-        if argv.len() > 0 {
-            let program: ~str = argv.remove(0);
-            cmd = Process {
-                command: program.to_owned(),
-                args: argv.to_owned(),
-                exit_status: None,
-            };
-            if argv.len() > 0 {
-                let last = argv.last();
-            }
-        }
         cmd
     }
 }
 
 impl BackgroundProcess {
-    fn new(cmd_line: &str) -> BackgroundProcess {
-        let mut argv: ~[~str] =
-            cmd_line.split(' ').filter_map(|x| if x != "" 
-                { 
-                    Some(x.to_owned()) 
-                }
-                else { 
-                    None 
-                }).to_owned_vec();
-        let mut cmd = BackgroundProcess {
-            command: "".to_owned(),
-            args: argv.to_owned(),
+    fn new(program: &str, args: ~[~str]) -> BackgroundProcess {
+        let cmd = BackgroundProcess {
+            command: program.to_owned(),
+            args: args.to_owned(),
             background: false,
             exit_status: None,
             io_port: None,
         };
-        if argv.len() > 0 {
-            let program: ~str = argv.remove(0);
-            cmd = BackgroundProcess {
-                command: program.to_owned(),
-                args: argv.to_owned(),
-                background: false,
-                exit_status: None,
-                io_port: None,
-            };
-            if argv.len() > 0 {
-                let last = argv.last();
-                if *last == ~"&" {
-                    cmd.args.pop();
-                    cmd.background = true;
-                    println!("{:s} is backgrounded.", cmd.command);
-                }
-            }
-        }
         cmd
     }
 }
@@ -115,7 +70,7 @@ impl BackgroundProcess {
 impl Command for Process {
     fn run(&mut self) {
         if self.cmd_exists() {
-                run::process_status(self.command, self.args);
+            run::process_status(self.command, self.args);
         } 
         else {
             println!("{:s}: command not found", self.command);
@@ -230,10 +185,30 @@ impl Shell {
     }
     
     fn run_cmdline(&mut self, cmd_line: &str) {
-        let mut cmd = Process::new(cmd_line);
-        cmd.run();
+        let mut argv: ~[~str] =
+            cmd_line.split(' ').filter_map(|x| if x != "" 
+                { 
+                    Some(x.to_owned()) 
+                }
+                else { 
+                    None 
+                }).to_owned_vec();
+        if argv.len() > 0 {
+            let program: ~str = argv.remove(0);
+            if argv.len() > 0 {
+                let last = argv.last().to_owned();
+                if last == ~"&" {
+                    argv.pop();
+                    let mut process = BackgroundProcess::new(program, argv);
+                    process.run();
+                }
+                else {
+                    let mut process = Process::new(program, argv);
+                    process.run();
+                }
+            }
+        }
     }
-    
 }
 
 fn get_cmdline_from_args() -> Option<~str> {

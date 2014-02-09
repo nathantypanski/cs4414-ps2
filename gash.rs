@@ -22,6 +22,59 @@ struct Shell {
     history: ~[~str],
 }
 
+struct Command {
+    command: ~str,
+    args: ~[~str],
+    background: bool,
+}
+
+impl Command {
+    // Really ugly argument parser.
+    fn new(cmd_line: &str) -> Command {
+        let mut argv: ~[~str] =
+            cmd_line.split(' ').filter_map(|x| if x != "" 
+                { 
+                    Some(x.to_owned()) 
+                }
+                else { 
+                    None 
+                }).to_owned_vec();
+        let mut cmd = Command {
+            command: "".to_owned(),
+            args: argv.to_owned(),
+            background: false
+        };
+        if argv.len() > 0 {
+            let program: ~str = argv.remove(0);
+            cmd = Command {
+                command: program.to_owned(),
+                args: argv.to_owned(),
+                background: false
+            };
+            if argv.len() > 0 {
+                let last = argv.last();
+                if *last == ~"&" {
+                    cmd.background = true;
+                }
+            }
+        }
+        cmd
+    }
+
+    fn run(&mut self) {
+        if self.cmd_exists() {
+            run::process_status(self.command, self.args);
+        } else {
+            println!("{:s}: command not found", self.command);
+        }
+    }
+    
+    fn cmd_exists(&mut self) -> bool {
+        let ret = run::process_output("which", [self.command.to_owned()]);
+        return ret.expect("exit code error.").status.success();
+    }
+}
+
 impl Shell {
     fn new(prompt_str: &str) -> Shell {
         Shell {
@@ -93,32 +146,10 @@ impl Shell {
     }
     
     fn run_cmdline(&mut self, cmd_line: &str) {
-        let mut argv: ~[~str] =
-            cmd_line.split(' ').filter_map(|x| if x != "" 
-                { 
-                    Some(x.to_owned()) 
-                }
-                else { 
-                    None 
-                }).to_owned_vec();
-        if argv.len() > 0 {
-            let program: ~str = argv.remove(0);
-            self.run_cmd(program, argv);
-        }
+        let mut cmd = Command::new(cmd_line);
+        cmd.run();
     }
     
-    fn run_cmd(&mut self, program: &str, argv: &[~str]) {
-        if self.cmd_exists(program) {
-            run::process_status(program, argv);
-        } else {
-            println!("{:s}: command not found", program);
-        }
-    }
-    
-    fn cmd_exists(&mut self, cmd_path: &str) -> bool {
-        let ret = run::process_output("which", [cmd_path.to_owned()]);
-        return ret.expect("exit code error.").status.success();
-    }
 }
 
 fn get_cmdline_from_args() -> Option<~str> {

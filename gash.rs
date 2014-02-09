@@ -13,6 +13,7 @@ extern mod extra;
 
 use std::{io, run, os};
 use std::io::buffered::BufferedReader;
+use std::path::posix::Path;
 use std::io::stdin;
 use extra::getopts;
 
@@ -41,15 +42,37 @@ impl Shell {
             match program {
                 ""      =>  { continue; }
                 "exit"  =>  { return; }
+                "cd"    =>  { self.chdir(cmd_line); }
                 _       =>  { self.run_cmdline(cmd_line); }
             }
+        }
+    }
+
+    fn chdir(&mut self, cmd_line: &str) {
+        let mut argv: ~[~str] =
+            cmd_line.split(' ').filter_map(|x| if x != "" 
+                { 
+                    Some(x.to_owned()) 
+                }
+                else { 
+                    None 
+                }).to_owned_vec();
+        if argv.len() > 0 {
+            argv.remove(0);
+            let path = Path::new(argv[0]);
+            os::change_dir(&path);
         }
     }
     
     fn run_cmdline(&mut self, cmd_line: &str) {
         let mut argv: ~[~str] =
-            cmd_line.split(' ').filter_map(|x| if x != "" { Some(x.to_owned()) } else { None }).to_owned_vec();
-    
+            cmd_line.split(' ').filter_map(|x| if x != "" 
+                { 
+                    Some(x.to_owned()) 
+                }
+                else { 
+                    None 
+                }).to_owned_vec();
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
             self.run_cmd(program, argv);

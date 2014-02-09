@@ -17,11 +17,14 @@ use std::path::posix::Path;
 use std::io::stdin;
 use std::option::Option;
 use std::io::process;
+use std::io::process::ProcessExit;
+use std::run::ProcessOptions;
 use extra::getopts;
 
 struct Shell {
     cmd_prompt: ~str,
     history: ~[~str],
+    processes : ~[~Command],
 }
 
 struct Process {
@@ -33,9 +36,8 @@ struct Process {
 struct BackgroundProcess {
     command: ~str,
     args: ~[~str],
-    background: bool,
-    exit_status: Option<process::ProcessExit>,
-    io_port: Option<Port<Option <process::ProcessExit>>>,
+    exit_status: Option<ProcessExit>,
+    io_port: Option<Port<Option <ProcessExit>>>,
 }
 
 trait Command {
@@ -59,7 +61,6 @@ impl BackgroundProcess {
         let cmd = BackgroundProcess {
             command: program.to_owned(),
             args: args.to_owned(),
-            background: false,
             exit_status: None,
             io_port: None,
         };
@@ -70,6 +71,7 @@ impl BackgroundProcess {
 impl Command for Process {
     fn run(&mut self) {
         if self.cmd_exists() {
+            println("Running process.");
             run::process_status(self.command, self.args);
         } 
         else {
@@ -86,24 +88,33 @@ impl Command for Process {
 impl Command for BackgroundProcess {
     fn run(&mut self) {
         if self.cmd_exists() {
-            match self.background {
-                true => {
-                    let (port, chan) : 
-                        (Port<Option<process::ProcessExit>>, 
-                         Chan<Option<process::ProcessExit>>) 
-                        = Chan::new();
-                    let command = self.command.to_owned();
-                    let args = self.args.to_owned();
-                    spawn(proc() { 
-                        chan.send(run::process_status(command, args));
-                    });
-                    self.io_port = Some(port);
-                }
-                false => {
-                    run::process_status(self.command, self.args);
-                }
-            }
-        } else {
+            println!("Running {:s} in background.", self.command);
+            let (port, chan) : 
+                (Port<Option<ProcessExit>>, 
+                    Chan<Option<ProcessExit>>) 
+                = Chan::new();
+            let command = self.command.to_owned();
+            let args = self.args.to_owned();
+            spawn(proc() { 
+                let output = run::process_status(command, args);
+                match output {
+                    Some(ecode) => {
+                        if (ecode.success()) {
+                            println("Process returned success.");
+                        }
+                        else {
+                            println("Process returned failure.");
+                        }
+                    }
+                    None => {
+                        println!("Process returned nothing.");
+                    }
+                };
+                chan.send(output);
+            });
+            self.io_port = Some(port);
+        }
+        else {
             println!("{:s}: command not found", self.command);
         }
     }
@@ -118,7 +129,8 @@ impl Shell {
     fn new(prompt_str: &str) -> Shell {
         Shell {
             cmd_prompt: prompt_str.to_owned(),
-            history: ~[]
+            history: ~[],
+            processes: ~[],
         }
     }
     
@@ -207,7 +219,15 @@ impl Shell {
                     process.run();
                 }
             }
+            else {
+                self.add_process(~Process::new(program, ~[]) as ~Command);
+            }
         }
+    }
+
+    fn add_process(&mut self, mut process : ~Command) {
+        &process.run();
+        self.processes.push(process);
     }
 }
 

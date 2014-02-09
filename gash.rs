@@ -15,6 +15,8 @@ use std::{io, run, os};
 use std::io::buffered::BufferedReader;
 use std::path::posix::Path;
 use std::io::stdin;
+use std::option::Option;
+use std::io::process;
 use extra::getopts;
 
 struct Shell {
@@ -22,15 +24,27 @@ struct Shell {
     history: ~[~str],
 }
 
-struct Command {
+struct Process {
+    command: ~str,
+    args: ~[~str],
+    exit_status: Option<process::ProcessExit>,
+}
+
+struct BackgroundProcess {
     command: ~str,
     args: ~[~str],
     background: bool,
+    exit_status: Option<process::ProcessExit>,
+    io_port: Option<Port<Option <process::ProcessExit>>>,
 }
 
-impl Command {
-    // Really ugly argument parser.
-    fn new(cmd_line: &str) -> Command {
+trait Command {
+    fn run(&mut self);
+    fn cmd_exists(&mut self) -> bool;
+}
+
+impl Process {
+    fn new(cmd_line: &str) -> Process {
         let mut argv: ~[~str] =
             cmd_line.split(' ').filter_map(|x| if x != "" 
                 { 
@@ -39,31 +53,101 @@ impl Command {
                 else { 
                     None 
                 }).to_owned_vec();
-        let mut cmd = Command {
+        let mut cmd = Process {
             command: "".to_owned(),
             args: argv.to_owned(),
-            background: false
+            exit_status: None,
         };
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
-            cmd = Command {
+            cmd = Process {
                 command: program.to_owned(),
                 args: argv.to_owned(),
-                background: false
+                exit_status: None,
+            };
+            if argv.len() > 0 {
+                let last = argv.last();
+            }
+        }
+        cmd
+    }
+}
+
+impl BackgroundProcess {
+    fn new(cmd_line: &str) -> BackgroundProcess {
+        let mut argv: ~[~str] =
+            cmd_line.split(' ').filter_map(|x| if x != "" 
+                { 
+                    Some(x.to_owned()) 
+                }
+                else { 
+                    None 
+                }).to_owned_vec();
+        let mut cmd = BackgroundProcess {
+            command: "".to_owned(),
+            args: argv.to_owned(),
+            background: false,
+            exit_status: None,
+            io_port: None,
+        };
+        if argv.len() > 0 {
+            let program: ~str = argv.remove(0);
+            cmd = BackgroundProcess {
+                command: program.to_owned(),
+                args: argv.to_owned(),
+                background: false,
+                exit_status: None,
+                io_port: None,
             };
             if argv.len() > 0 {
                 let last = argv.last();
                 if *last == ~"&" {
+                    cmd.args.pop();
                     cmd.background = true;
+                    println!("{:s} is backgrounded.", cmd.command);
                 }
             }
         }
         cmd
     }
+}
 
+impl Command for Process {
     fn run(&mut self) {
         if self.cmd_exists() {
-            run::process_status(self.command, self.args);
+                run::process_status(self.command, self.args);
+        } 
+        else {
+            println!("{:s}: command not found", self.command);
+        }
+    }
+    
+    fn cmd_exists(&mut self) -> bool {
+        let ret = run::process_output("which", [self.command.to_owned()]);
+        return ret.expect("exit code error.").status.success();
+    }
+}
+
+impl Command for BackgroundProcess {
+    fn run(&mut self) {
+        if self.cmd_exists() {
+            match self.background {
+                true => {
+                    let (port, chan) : 
+                        (Port<Option<process::ProcessExit>>, 
+                         Chan<Option<process::ProcessExit>>) 
+                        = Chan::new();
+                    let command = self.command.to_owned();
+                    let args = self.args.to_owned();
+                    spawn(proc() { 
+                        chan.send(run::process_status(command, args));
+                    });
+                    self.io_port = Some(port);
+                }
+                false => {
+                    run::process_status(self.command, self.args);
+                }
+            }
         } else {
             println!("{:s}: command not found", self.command);
         }
@@ -146,7 +230,7 @@ impl Shell {
     }
     
     fn run_cmdline(&mut self, cmd_line: &str) {
-        let mut cmd = Command::new(cmd_line);
+        let mut cmd = Process::new(cmd_line);
         cmd.run();
     }
     

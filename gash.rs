@@ -19,12 +19,14 @@ use extra::getopts;
 
 struct Shell {
     cmd_prompt: ~str,
+    history: ~[~str],
 }
 
 impl Shell {
     fn new(prompt_str: &str) -> Shell {
         Shell {
             cmd_prompt: prompt_str.to_owned(),
+            history: ~[]
         }
     }
     
@@ -39,13 +41,39 @@ impl Shell {
             let cmd_line = line.trim().to_owned();
             let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
             
+            // Push run commands onto the history stack
             match program {
-                ""      =>  { continue; }
-                "exit"  =>  { return; }
-                "cd"    =>  { self.chdir(cmd_line); }
-                _       =>  { self.run_cmdline(cmd_line); }
+                "" => {}
+                _  => { self.push_hist(cmd_line) } 
+            }
+            match program {
+                ""        =>  { continue; }
+                "exit"    =>  { return; }
+                "history" =>  { self.show_hist(); }
+                "cd"      =>  { self.chdir(cmd_line); }
+                _         =>  { self.run_cmdline(cmd_line); }
             }
         }
+    }
+
+    fn push_hist(&mut self, cmd_line: &str) {
+        &self.history.push(cmd_line.to_owned());
+    }
+
+    fn show_hist(&mut self) {
+        println!("{:s}", self.get_hist());
+    }
+    
+    fn get_hist(&mut self) -> ~str {
+        let mut hist = ~"";
+        for i in self.history.iter() {
+            let s = i.to_owned();
+            match hist {
+                ~"" => { hist = s; }
+                _   => { hist = hist + "\n" + s; }
+            }
+        }
+        return hist
     }
 
     fn chdir(&mut self, cmd_line: &str) {

@@ -17,6 +17,7 @@ use std::path::posix::Path;
 use std::io::stdin;
 use std::option::Option;
 use std::io::process;
+use std::io::{IoError, io_error};
 use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
@@ -92,7 +93,6 @@ impl Command for CmdProcess {
 impl Command for BackgroundProcess {
     fn run(&mut self) {
         if self.cmd_exists() {
-            println!("Running {:s} in background.", self.command);
             let (port, chan) : (Port<ProcessExit>, Chan<ProcessExit>) 
                     = Chan::new();
             let (killport, killchan) : (Port<int>, Chan<int>) = Chan::new();
@@ -109,13 +109,26 @@ impl Command for BackgroundProcess {
                 let maybe_process = Process::new(command, args, options);
                 match maybe_process {
                     Some(mut process) => {
-                        println!("{:?} was spawned.", process.get_id());
                         let signal = killport.recv();
+                        let mut error = None;
                         match signal {
-                            9 => {process.force_destroy();}
-                            15 => {process.destroy();}
+                            9 => { 
+                                io_error::cond.trap(|e: IoError| {
+                                    error = Some(e);
+                                    }).inside(|| {
+                                        process.force_destroy() 
+                                    })
+                            }
+                            15 => {
+                                io_error::cond.trap(|e: IoError| {
+                                    error = Some(e);
+                                    }).inside(|| {
+                                        process.force_destroy() 
+                                    })
+                            }
                             _ => {}
                         }
+                        chan.try_send_deferred(process.finish());
                     }
                     None => {
                     }
@@ -183,7 +196,6 @@ impl Shell {
                     match p.try_recv() {
                         Some (exitstatus) => {
                             if (exitstatus.success()) {
-                                println("Process completed successfully");
                                 dead.push(i);
                             }
                         },
@@ -195,7 +207,6 @@ impl Shell {
             i += 1;
         }
         for &p in dead.iter() {
-            println!("Killing process {:u}", p);
             self.processes.remove(p);
         }
     }
@@ -204,29 +215,12 @@ impl Shell {
         for p in self.processes.iter() {
             match p.kill_chan {
                 Some(ref kill_channel) => {
-                    kill_channel.send(15);
+                    kill_channel.try_send_deferred(15);
                 }
                 None => {}
             }
 
         }
-        /*
-        loop {
-            match self.processes.pop_opt() {
-                None => {println("Done killing ");
-                    break} ,
-                Some(process)    => {
-                    println("Killing one process");
-                    match process.kill_chan {
-                        Some (kill_channel) => {
-                            kill_channel.send(15);
-                        }
-                        None => {}
-                    }
-                }
-            }
-        }
-        */
     }
 
     fn push_hist(&mut self, cmd_line: &str) {

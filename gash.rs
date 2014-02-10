@@ -17,6 +17,7 @@ use std::path::posix::Path;
 use std::io::stdin;
 use std::option::Option;
 use std::io::process;
+use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
 use extra::getopts;
@@ -24,10 +25,10 @@ use extra::getopts;
 struct Shell {
     cmd_prompt: ~str,
     history: ~[~str],
-    processes : ~[~Command],
+    processes : ~[~BackgroundProcess],
 }
 
-struct Process {
+struct CmdProcess {
     command: ~str,
     args: ~[~str],
     exit_status: Option<process::ProcessExit>,
@@ -37,17 +38,19 @@ struct BackgroundProcess {
     command: ~str,
     args: ~[~str],
     exit_status: Option<ProcessExit>,
-    io_port: Option<Port<Option <ProcessExit>>>,
+    io_port: Option<Port<ProcessExit>>,
+    kill_chan : Option<Chan<int>>,
 }
 
 trait Command {
     fn run(&mut self);
     fn cmd_exists(&mut self) -> bool;
+//    fn is_running(&mut self) -> bool;
 }
 
-impl Process {
-    fn new(program: &str, args: ~[~str]) -> Process {
-        let cmd = Process {
+impl CmdProcess {
+    fn new(program: &str, args: ~[~str]) -> CmdProcess {
+        let cmd = CmdProcess {
             command: program.to_owned(),
             args: args.to_owned(),
             exit_status: None,
@@ -63,16 +66,17 @@ impl BackgroundProcess {
             args: args.to_owned(),
             exit_status: None,
             io_port: None,
+            kill_chan: None,
         };
         cmd
     }
 }
 
-impl Command for Process {
+impl Command for CmdProcess {
     fn run(&mut self) {
         if self.cmd_exists() {
             println("Running process.");
-            run::process_status(self.command, self.args);
+            self.exit_status = run::process_status(self.command, self.args);
         } 
         else {
             println!("{:s}: command not found", self.command);
@@ -89,30 +93,36 @@ impl Command for BackgroundProcess {
     fn run(&mut self) {
         if self.cmd_exists() {
             println!("Running {:s} in background.", self.command);
-            let (port, chan) : 
-                (Port<Option<ProcessExit>>, 
-                    Chan<Option<ProcessExit>>) 
-                = Chan::new();
+            let (port, chan) : (Port<ProcessExit>, Chan<ProcessExit>) 
+                    = Chan::new();
+            let (killport, killchan) : (Port<int>, Chan<int>) = Chan::new();
             let command = self.command.to_owned();
             let args = self.args.to_owned();
             spawn(proc() { 
-                let output = run::process_status(command, args);
-                match output {
-                    Some(ecode) => {
-                        if (ecode.success()) {
-                            println("Process returned success.");
-                        }
-                        else {
-                            println("Process returned failure.");
+                let options = ProcessOptions {
+                    env : None,
+                    dir : None,
+                    in_fd : None,
+                    out_fd : None,
+                    err_fd : None,
+                };
+                let maybe_process = Process::new(command, args, options);
+                match maybe_process {
+                    Some(mut process) => {
+                        println!("{:?} was spawned.", process.get_id());
+                        let signal = killport.recv();
+                        match signal {
+                            9 => {process.force_destroy();}
+                            15 => {process.destroy();}
+                            _ => {}
                         }
                     }
                     None => {
-                        println!("Process returned nothing.");
                     }
-                };
-                chan.send(output);
+                }
             });
             self.io_port = Some(port);
+            self.kill_chan = Some(killchan);
         }
         else {
             println!("{:s}: command not found", self.command);
@@ -123,6 +133,7 @@ impl Command for BackgroundProcess {
         let ret = run::process_output("which", [self.command.to_owned()]);
         return ret.expect("exit code error.").status.success();
     }
+
 }
 
 impl Shell {
@@ -133,7 +144,7 @@ impl Shell {
             processes: ~[],
         }
     }
-    
+
     fn run(&mut self) {
         let mut stdin = BufferedReader::new(stdin());
         
@@ -144,20 +155,78 @@ impl Shell {
             let line = stdin.read_line().unwrap();
             let cmd_line = line.trim().to_owned();
             let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
-            
-            // Push run commands onto the history stack
+            self.kill_dead();
             match program {
                 "" => {}
                 _  => { self.push_hist(cmd_line) } 
             }
             match program {
                 ""        =>  { continue; }
-                "exit"    =>  { return; }
+                "exit"    =>  { 
+                    self.kill_all();
+                    return; 
+                }
                 "history" =>  { self.show_hist(); }
                 "cd"      =>  { self.chdir(cmd_line); }
                 _         =>  { self.run_cmdline(cmd_line); }
             }
         }
+    }
+
+    fn kill_dead(&mut self) {
+        let mut dead : ~[uint];
+        dead = ~[];
+        let mut i = 0;
+        for cmd in self.processes.iter() {
+            match cmd.io_port {
+                Some(ref p) => {
+                    match p.try_recv() {
+                        Some (exitstatus) => {
+                            if (exitstatus.success()) {
+                                println("Process completed successfully");
+                                dead.push(i);
+                            }
+                        },
+                        None => {}
+                    }
+                },
+                None       => {},
+            }
+            i += 1;
+        }
+        for &p in dead.iter() {
+            println!("Killing process {:u}", p);
+            self.processes.remove(p);
+        }
+    }
+
+    fn kill_all(&mut self) {
+        for p in self.processes.iter() {
+            match p.kill_chan {
+                Some(ref kill_channel) => {
+                    kill_channel.send(15);
+                }
+                None => {}
+            }
+
+        }
+        /*
+        loop {
+            match self.processes.pop_opt() {
+                None => {println("Done killing ");
+                    break} ,
+                Some(process)    => {
+                    println("Killing one process");
+                    match process.kill_chan {
+                        Some (kill_channel) => {
+                            kill_channel.send(15);
+                        }
+                        None => {}
+                    }
+                }
+            }
+        }
+        */
     }
 
     fn push_hist(&mut self, cmd_line: &str) {
@@ -211,21 +280,19 @@ impl Shell {
                 let last = argv.last().to_owned();
                 if last == ~"&" {
                     argv.pop();
-                    let mut process = BackgroundProcess::new(program, argv);
-                    process.run();
+                    self.add_process(~BackgroundProcess::new(program, argv));
                 }
                 else {
-                    let mut process = Process::new(program, argv);
-                    process.run();
+                    CmdProcess::new(program, argv).run();
                 }
             }
             else {
-                self.add_process(~Process::new(program, ~[]) as ~Command);
+                CmdProcess::new(program, argv).run();
             }
         }
     }
 
-    fn add_process(&mut self, mut process : ~Command) {
+    fn add_process(&mut self, mut process : ~BackgroundProcess) {
         &process.run();
         self.processes.push(process);
     }

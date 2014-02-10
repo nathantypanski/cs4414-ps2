@@ -11,13 +11,11 @@
 
 extern mod extra;
 
-use std::{io, run, os};
+use std::{run, os};
 use std::io::buffered::BufferedReader;
 use std::path::posix::Path;
-use std::io::stdin;
 use std::option::Option;
-use std::io::process;
-use std::io::{IoError, io_error};
+use std::io::{stdin, stdio, process, IoError, io_error};
 use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
@@ -47,29 +45,42 @@ fn is_dead(exit_port : &Option<Port<ProcessExit>>) -> bool {
 }
 
 trait Command {
-    fn run(&mut self);
+    fn run(&mut self) -> Option<Process>;
 }
 
 struct CmdProcess {
     command     : ~str,
     args        : ~[~str],
+    stdin       : i32,
+    stdout      : i32,
     exit_status : Option<process::ProcessExit>,
 }
 impl CmdProcess {
-    fn new(command: &str, args: ~[~str]) -> Option<CmdProcess> {
+    fn new(command: &str, args: ~[~str], stdin : i32, stdout : i32) -> Option<CmdProcess> {
         if (cmd_exists(command)) {
             Some(CmdProcess {
-                command: command.to_owned(),
-                args: args.to_owned(),
-                exit_status: None,
+                command     : command.to_owned(),
+                args        : args.to_owned(),
+                stdin       : stdin,
+                stdout      : stdout,
+                exit_status : None,
             })
         }
         else { None }
     }
 }
 impl Command for CmdProcess {
-    fn run(&mut self) {
-        self.exit_status = run::process_status(self.command, self.args);
+    fn run(&mut self) -> Option<Process> {
+        let command = self.command.to_owned();
+        let args = self.args.to_owned();
+        let options = ProcessOptions {
+            env    : None,
+            dir    : None,
+            in_fd  : Some(self.stdin),
+            out_fd : Some(self.stdout),
+            err_fd : None,
+        };
+        Process::new(command, args, options)
     }
 }
 
@@ -93,8 +104,6 @@ impl BackgroundProcess {
         }
         else { None }
     }
-}
-impl Command for BackgroundProcess {
     fn run(&mut self) {
         let (port, chan) : (Port<ProcessExit>, Chan<ProcessExit>) 
                 = Chan::new();
@@ -161,7 +170,7 @@ impl Shell {
         
         loop {
             print(self.cmd_prompt);
-            io::stdio::flush();
+            stdio::flush();
             
             let line = stdin.read_line().unwrap();
             let cmd_line = line.trim().to_owned();
@@ -198,7 +207,6 @@ impl Shell {
             self.processes.remove(p);
         }
     }
-
 
     fn kill_all(&mut self) {
         for p in self.processes.iter() {
@@ -280,8 +288,10 @@ impl Shell {
     }
     
     fn make_fg_process(&mut self, program : ~str, argv : ~[~str]) {
-        match CmdProcess::new(program, argv) {
-            Some(mut process) => { process.run(); }    
+        match CmdProcess::new(program, argv, 0, 1) {
+            Some(mut cmdprocess) => { 
+                cmdprocess.run();
+            }    
             None              => { }
         }
     }

@@ -11,13 +11,11 @@
 
 extern mod extra;
 
-use std::{io, run, os};
+use std::{run, os};
 use std::io::buffered::BufferedReader;
 use std::path::posix::Path;
-use std::io::stdin;
 use std::option::Option;
-use std::io::process;
-use std::io::{IoError, io_error};
+use std::io::{stdin, stdio, process, IoError, io_error, File, Truncate, Write};
 use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
@@ -47,29 +45,47 @@ fn is_dead(exit_port : &Option<Port<ProcessExit>>) -> bool {
 }
 
 trait Command {
-    fn run(&mut self);
+    fn run(&mut self) -> Option<Process>;
 }
 
 struct CmdProcess {
     command     : ~str,
     args        : ~[~str],
+    stdin       : Option<i32>,
+    stdout      : Option<i32>,
     exit_status : Option<process::ProcessExit>,
 }
 impl CmdProcess {
-    fn new(command: &str, args: ~[~str]) -> Option<CmdProcess> {
+    fn new(command: &str, 
+           args: ~[~str], 
+           stdin : Option<i32>,
+           stdout : Option<i32>) 
+        -> Option<CmdProcess> 
+    {
         if (cmd_exists(command)) {
             Some(CmdProcess {
-                command: command.to_owned(),
-                args: args.to_owned(),
-                exit_status: None,
+                command     : command.to_owned(),
+                args        : args.to_owned(),
+                stdin       : stdin,
+                stdout      : stdout,
+                exit_status : None,
             })
         }
         else { None }
     }
 }
 impl Command for CmdProcess {
-    fn run(&mut self) {
-        self.exit_status = run::process_status(self.command, self.args);
+    fn run(&mut self) -> Option<Process> {
+        let command = self.command.to_owned();
+        let args = self.args.to_owned();
+        let options = ProcessOptions {
+            env    : None,
+            dir    : None,
+            in_fd  : self.stdin,
+            out_fd : self.stdout,
+            err_fd : None,
+        };
+        Process::new(command, args, options)
     }
 }
 
@@ -93,8 +109,6 @@ impl BackgroundProcess {
         }
         else { None }
     }
-}
-impl Command for BackgroundProcess {
     fn run(&mut self) {
         let (port, chan) : (Port<ProcessExit>, Chan<ProcessExit>) 
                 = Chan::new();
@@ -147,6 +161,7 @@ struct Shell {
     history    : ~[~str],
     processes  : ~[~BackgroundProcess],
 }
+
 impl Shell {
     fn new(prompt_str: &str) -> Shell {
         Shell {
@@ -161,7 +176,7 @@ impl Shell {
         
         loop {
             print(self.cmd_prompt);
-            io::stdio::flush();
+            stdio::flush();
             
             let line = stdin.read_line().unwrap();
             let cmd_line = line.trim().to_owned();
@@ -198,7 +213,6 @@ impl Shell {
             self.processes.remove(p);
         }
     }
-
 
     fn kill_all(&mut self) {
         for p in self.processes.iter() {
@@ -249,16 +263,24 @@ impl Shell {
     }
     
     fn run_cmdline(&mut self, cmd_line: &str) {
-        let argv: ~[~str] =
-            cmd_line.split(' ').filter_map(|x| if x != "" 
-                { 
-                    Some(x.to_owned()) 
-                }
-                else { 
-                    None 
-                }).to_owned_vec();
-        if argv.len() > 0 {
-            self.parse_process(argv);
+        if cmd_line.contains_char('>') {
+            self.parse_r_redirect(cmd_line);
+        }
+        else if cmd_line.contains_char('<') {
+            self.parse_l_redirect(cmd_line);
+        }
+        else {
+            let argv: ~[~str] =
+                cmd_line.split(' ').filter_map(|x| if x != "" 
+                    { 
+                        Some(x.to_owned()) 
+                    }
+                    else { 
+                        None 
+                    }).to_owned_vec();
+            if argv.len() > 0 {
+                self.parse_process(argv);
+            }
         }
     }
 
@@ -278,24 +300,116 @@ impl Shell {
             self.make_fg_process(program, argv);
         }
     }
+
+    fn parse_r_redirect(&mut self, cmd_line : &str) {
+        let pair : ~[&str] = cmd_line.rsplit('>').collect();
+        let file = pair[0].trim();
+        let command = pair[1].trim();
+        let mut argv: ~[~str] =
+            command.split(' ').filter_map(
+                |x| if x != "" { Some(x.to_owned()) }
+                    else { None }
+                ).to_owned_vec();
+        if argv.len() > 0 {
+            let program: ~str = argv.remove(0);
+            match CmdProcess::new(program, argv, None, None) {
+                Some(mut cmdprocess) => { 
+                    match cmdprocess.run() {
+                        Some(mut process) => {
+                            self.write_output_to_file(
+                                process.finish_with_output(),
+                                file);
+                        }
+                        None => { 
+                            println!("Failed spawning a process for {:s}.", command) 
+                        }
+                    }
+                }    
+                None => { 
+                    println!("{:s} is not a command.", command) 
+                }
+            }
+        }
+    }
+
+    fn write_output_to_file(&mut self, 
+                            output : std::run::ProcessOutput,
+                            filename : &str) {
+        if output.status.success() {
+            match File::open_mode(&Path::new(filename),
+                                  std::io::Truncate, 
+                                  std::io::Write) 
+            {
+                Some(mut file) => {
+                    file.write(output.output);
+                }
+                None =>{
+                    println!("Opening {:s} failed!", filename);
+                }
+            }
+        }
+        else {
+            println!("{:?}", output.error);
+        }
+    }
+
+    fn parse_l_redirect(&mut self, cmd_line : &str) {
+        let pair : ~[&str] = cmd_line.rsplit('<').collect();
+        let filename = pair[0].trim();
+        let command = pair[1].trim();
+        let mut argv: ~[~str] =
+            command.split(' ').filter_map(
+                |x| 
+                    if x != "" { Some(x.to_owned()) }
+                    else { None }
+                ).to_owned_vec();
+        if argv.len() > 0 {
+            let program: ~str = argv.remove(0);
+            match CmdProcess::new(program, argv, None, Some(1)) {
+                Some(mut cmdprocess) => { 
+                    match cmdprocess.run() {
+                        Some(mut process) => {
+                            match File::open_mode(&Path::new(filename),
+                                                  std::io::Append,
+                                                  std::io::ReadWrite)
+                            {
+                                Some(file) => {
+                                    let proc_input = process.input();
+                                    let mut file_buffer = BufferedReader::new(file);
+                                    proc_input.write(file_buffer.read_to_end());
+                                }
+                                None => {}
+                            }
+                        }
+                        None => { 
+                            println!("Failed spawning a process for {:s}.", command) 
+                        }
+                    }
+                }    
+                None => { 
+                    println!("{:s} is not a command.", command) 
+                }
+            }
+        }
+    }
     
     fn make_fg_process(&mut self, program : ~str, argv : ~[~str]) {
-        match CmdProcess::new(program, argv) {
-            Some(mut process) => { process.run(); }    
+        match CmdProcess::new(program, argv, Some(0), Some(1)) {
+            Some(mut cmdprocess) => { 
+                cmdprocess.run();
+            }    
             None              => { }
         }
     }
 
     fn make_bg_process(&mut self, program : ~str, argv : ~[~str]) {
         match BackgroundProcess::new(program, argv) {
-            Some(process) => {self.add_process(~process);}    
+            Some(mut process) => {
+                process.run();
+                self.processes.push(~process);
+            }    
             None          => { }
         }
-    }
-
-    fn add_process(&mut self, mut process : ~BackgroundProcess) {
-        &process.run();
-        self.processes.push(process);
     }
 }
 

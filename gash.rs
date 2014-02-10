@@ -23,26 +23,6 @@ use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
 use extra::getopts;
 
-struct Shell {
-    cmd_prompt : ~str,
-    history    : ~[~str],
-    processes  : ~[~BackgroundProcess],
-}
-
-struct CmdProcess {
-    command     : ~str,
-    args        : ~[~str],
-    exit_status : Option<process::ProcessExit>,
-}
-
-struct BackgroundProcess {
-    command      : ~str,
-    args         : ~[~str],
-    exit_status  : Option<ProcessExit>,
-    exit_port    : Option<Port<ProcessExit>>,
-    kill_chan    : Option<Chan<int>>,
-}
-
 fn cmd_exists(command : &str) -> bool {
     let ret = run::process_output("which", [command.to_owned()]);
     return ret.expect("exit code error.").status.success();
@@ -70,6 +50,11 @@ trait Command {
     fn run(&mut self);
 }
 
+struct CmdProcess {
+    command     : ~str,
+    args        : ~[~str],
+    exit_status : Option<process::ProcessExit>,
+}
 impl CmdProcess {
     fn new(command: &str, args: ~[~str]) -> Option<CmdProcess> {
         if (cmd_exists(command)) {
@@ -82,7 +67,19 @@ impl CmdProcess {
         else { None }
     }
 }
+impl Command for CmdProcess {
+    fn run(&mut self) {
+        self.exit_status = run::process_status(self.command, self.args);
+    }
+}
 
+struct BackgroundProcess {
+    command      : ~str,
+    args         : ~[~str],
+    exit_status  : Option<ProcessExit>,
+    exit_port    : Option<Port<ProcessExit>>,
+    kill_chan    : Option<Chan<int>>,
+}
 impl BackgroundProcess {
     fn new(command: &str, args: ~[~str]) -> Option<BackgroundProcess> {
         if (cmd_exists(command)) {
@@ -97,13 +94,6 @@ impl BackgroundProcess {
         else { None }
     }
 }
-
-impl Command for CmdProcess {
-    fn run(&mut self) {
-        self.exit_status = run::process_status(self.command, self.args);
-    }
-}
-
 impl Command for BackgroundProcess {
     fn run(&mut self) {
         let (port, chan) : (Port<ProcessExit>, Chan<ProcessExit>) 
@@ -150,9 +140,13 @@ impl Command for BackgroundProcess {
         self.exit_port = Some(port);
         self.kill_chan = Some(killchan);
     }
-    
 }
 
+struct Shell {
+    cmd_prompt : ~str,
+    history    : ~[~str],
+    processes  : ~[~BackgroundProcess],
+}
 impl Shell {
     fn new(prompt_str: &str) -> Shell {
         Shell {

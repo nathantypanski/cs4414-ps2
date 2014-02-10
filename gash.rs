@@ -15,7 +15,7 @@ use std::{run, os};
 use std::io::buffered::BufferedReader;
 use std::path::posix::Path;
 use std::option::Option;
-use std::io::{stdin, stdio, process, IoError, io_error};
+use std::io::{stdin, stdio, process, IoError, io_error, File};
 use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
@@ -51,12 +51,17 @@ trait Command {
 struct CmdProcess {
     command     : ~str,
     args        : ~[~str],
-    stdin       : i32,
-    stdout      : i32,
+    stdin       : Option<i32>,
+    stdout      : Option<i32>,
     exit_status : Option<process::ProcessExit>,
 }
 impl CmdProcess {
-    fn new(command: &str, args: ~[~str], stdin : i32, stdout : i32) -> Option<CmdProcess> {
+    fn new(command: &str, 
+           args: ~[~str], 
+           stdin : Option<i32>,
+           stdout : Option<i32>) 
+        -> Option<CmdProcess> 
+    {
         if (cmd_exists(command)) {
             Some(CmdProcess {
                 command     : command.to_owned(),
@@ -76,8 +81,8 @@ impl Command for CmdProcess {
         let options = ProcessOptions {
             env    : None,
             dir    : None,
-            in_fd  : Some(self.stdin),
-            out_fd : Some(self.stdout),
+            in_fd  : self.stdin,
+            out_fd : self.stdout,
             err_fd : None,
         };
         Process::new(command, args, options)
@@ -156,6 +161,7 @@ struct Shell {
     history    : ~[~str],
     processes  : ~[~BackgroundProcess],
 }
+
 impl Shell {
     fn new(prompt_str: &str) -> Shell {
         Shell {
@@ -257,16 +263,24 @@ impl Shell {
     }
     
     fn run_cmdline(&mut self, cmd_line: &str) {
-        let argv: ~[~str] =
-            cmd_line.split(' ').filter_map(|x| if x != "" 
-                { 
-                    Some(x.to_owned()) 
-                }
-                else { 
-                    None 
-                }).to_owned_vec();
-        if argv.len() > 0 {
-            self.parse_process(argv);
+        if cmd_line.contains_char('>') {
+            self.parse_r_redirect(cmd_line);
+        }
+        else if cmd_line.contains_char('>') {
+            self.parse_l_redirect(cmd_line);
+        }
+        else {
+            let argv: ~[~str] =
+                cmd_line.split(' ').filter_map(|x| if x != "" 
+                    { 
+                        Some(x.to_owned()) 
+                    }
+                    else { 
+                        None 
+                    }).to_owned_vec();
+            if argv.len() > 0 {
+                self.parse_process(argv);
+            }
         }
     }
 
@@ -286,9 +300,67 @@ impl Shell {
             self.make_fg_process(program, argv);
         }
     }
+
+    fn parse_r_redirect(&mut self, cmd_line : &str) {
+        let pair : ~[&str] = cmd_line.rsplit('>').collect();
+        let file = pair[0].trim();
+        let command = pair[1].trim();
+        let mut argv: ~[~str] =
+            command.split(' ').filter_map(
+                |x| 
+                    if x != "" { Some(x.to_owned()) }
+                    else { None }
+                ).to_owned_vec();
+        if argv.len() > 0 {
+            let program: ~str = argv.remove(0);
+            match CmdProcess::new(program, argv, None, None) {
+                Some(mut cmdprocess) => { 
+                    match cmdprocess.run() {
+                        Some(mut process) => {
+                            println!("Spawned {:s}.\nWriting to file.", command) 
+                            self.write_output_to_file(
+                                process.finish_with_output(),
+                                file);
+                        }
+                        None => { 
+                            println!("Failed spawning a process for {:s}.", command) 
+                        }
+                    }
+                }    
+                None => { 
+                    println!("{:s} is not a command.", command) 
+                }
+            }
+        }
+    }
+
+    fn write_output_to_file(&mut self, 
+                            output : std::run::ProcessOutput,
+                            filename : &str) {
+        if output.status.success() {
+            match File::open_mode(&Path::new(filename),
+                                  std::io::Truncate, 
+                                  std::io::Write) 
+            {
+                Some(mut file) => {
+                    file.write(output.output);
+                }
+                None =>{
+                    println!("Opening {:s} failed!", filename);
+                }
+            }
+        }
+        else {
+            println!("{:?}", output.error);
+        }
+    }
+
+    fn parse_l_redirect(&mut self, cmd_line : &str) {
+        let pair : ~[&str] = cmd_line.rsplit('>').collect();
+    }
     
     fn make_fg_process(&mut self, program : ~str, argv : ~[~str]) {
-        match CmdProcess::new(program, argv, 0, 1) {
+        match CmdProcess::new(program, argv, Some(0), Some(1)) {
             Some(mut cmdprocess) => { 
                 cmdprocess.run();
             }    

@@ -298,14 +298,12 @@ impl Shell {
 
     fn make_bg_process(&mut self, program : ~str, argv : ~[~str]) {
         match BackgroundProcess::new(program, argv) {
-            Some(process) => {self.add_process(~process);}    
+            Some(mut process) => {
+                process.run();
+                self.processes.push(~process);
+            }    
             None          => { }
         }
-    }
-
-    fn add_process(&mut self, mut process : ~BackgroundProcess) {
-        &process.run();
-        self.processes.push(process);
     }
 }
 

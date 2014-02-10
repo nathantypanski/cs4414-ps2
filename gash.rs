@@ -76,7 +76,6 @@ impl BackgroundProcess {
 impl Command for CmdProcess {
     fn run(&mut self) {
         if self.cmd_exists() {
-            println("Running process.");
             self.exit_status = run::process_status(self.command, self.args);
         } 
         else {

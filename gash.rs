@@ -15,7 +15,7 @@ use std::{run, os};
 use std::io::buffered::BufferedReader;
 use std::path::posix::Path;
 use std::option::Option;
-use std::io::{stdin, stdio, process, IoError, io_error, File};
+use std::io::{stdin, stdio, process, IoError, io_error, File, Truncate, Write};
 use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
@@ -266,7 +266,7 @@ impl Shell {
         if cmd_line.contains_char('>') {
             self.parse_r_redirect(cmd_line);
         }
-        else if cmd_line.contains_char('>') {
+        else if cmd_line.contains_char('<') {
             self.parse_l_redirect(cmd_line);
         }
         else {
@@ -307,8 +307,7 @@ impl Shell {
         let command = pair[1].trim();
         let mut argv: ~[~str] =
             command.split(' ').filter_map(
-                |x| 
-                    if x != "" { Some(x.to_owned()) }
+                |x| if x != "" { Some(x.to_owned()) }
                     else { None }
                 ).to_owned_vec();
         if argv.len() > 0 {
@@ -317,7 +316,6 @@ impl Shell {
                 Some(mut cmdprocess) => { 
                     match cmdprocess.run() {
                         Some(mut process) => {
-                            println!("Spawned {:s}.\nWriting to file.", command) 
                             self.write_output_to_file(
                                 process.finish_with_output(),
                                 file);
@@ -356,7 +354,43 @@ impl Shell {
     }
 
     fn parse_l_redirect(&mut self, cmd_line : &str) {
-        let pair : ~[&str] = cmd_line.rsplit('>').collect();
+        let pair : ~[&str] = cmd_line.rsplit('<').collect();
+        let filename = pair[0].trim();
+        let command = pair[1].trim();
+        let mut argv: ~[~str] =
+            command.split(' ').filter_map(
+                |x| 
+                    if x != "" { Some(x.to_owned()) }
+                    else { None }
+                ).to_owned_vec();
+        if argv.len() > 0 {
+            let program: ~str = argv.remove(0);
+            match CmdProcess::new(program, argv, None, Some(1)) {
+                Some(mut cmdprocess) => { 
+                    match cmdprocess.run() {
+                        Some(mut process) => {
+                            match File::open_mode(&Path::new(filename),
+                                                  std::io::Append,
+                                                  std::io::ReadWrite)
+                            {
+                                Some(file) => {
+                                    let proc_input = process.input();
+                                    let mut file_buffer = BufferedReader::new(file);
+                                    proc_input.write(file_buffer.read_to_end());
+                                }
+                                None => {}
+                            }
+                        }
+                        None => { 
+                            println!("Failed spawning a process for {:s}.", command) 
+                        }
+                    }
+                }    
+                None => { 
+                    println!("{:s} is not a command.", command) 
+                }
+            }
+        }
     }
     
     fn make_fg_process(&mut self, program : ~str, argv : ~[~str]) {

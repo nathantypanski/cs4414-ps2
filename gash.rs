@@ -353,20 +353,12 @@ impl Shell {
         let mut argv: ~[~str] = self.split_words(cmd_line);
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
-            match CmdProcess::new(program, argv, None, None) {
-                Some(mut cmdprocess) => { 
-                    match cmdprocess.run() {
-                        Some(process) => {
-                            Some(~process)
-                        }
-                        None => { 
-                            println!("Failed spawning a process for {:s}.", program);
-                            None
-                        }
-                    }
+            match self.make_process(program, argv, None, None) {
+                Some(process) => {
+                    Some(~process)
                 }
                 None => { 
-                    println!("{:s} is not a command.", program) ;
+                    println!("Failed spawning a process for {:s}.", program);
                     None
                 }
             }
@@ -451,7 +443,7 @@ impl Shell {
     }
     
     fn make_process(&mut self, 
-                    program : ~str,
+                    program : &str,
                     argv : ~[~str],
                     stdin: Option<i32>,
                     stdout: Option<i32>) -> Option<run::Process> {
@@ -463,7 +455,7 @@ impl Shell {
         }
     }
 
-    fn make_bg_process(&mut self, program : ~str, argv : ~[~str]) {
+    fn make_bg_process(&mut self, program : &str, argv : ~[~str]) {
         match BackgroundProcess::new(program, argv) {
             Some(mut process) => {
                 process.run();

@@ -272,54 +272,56 @@ impl Shell {
         }
     }
 
-    fn parse_process(&mut self, mut argv : ~[~str]) {
+    fn parse_process(&mut self, mut argv : ~[~str]) -> Option<Process>{
         let program: ~str = argv.remove(0);
         if argv.len() > 0 {
             let last = argv.last().to_owned();
             if last == ~"&" {
                 argv.pop();
                 self.make_bg_process(program, argv);
+                None
             }
             else {
-                self.make_fg_process(program, argv);
+                self.make_process(program, argv, Some(0), Some(1))
             }
         }
         else {
-            self.make_fg_process(program, argv);
+            self.make_process(program, argv, Some(0), Some(1))
         }
     }
 
     fn parse_pipeline(&mut self, cmd_line : &str) -> Option<~run::Process> {
         let pair : ~[&str] = cmd_line.rsplitn('|', 1).collect();
         let one = pair[0].trim();
-        println!("one: {:?}", one);
         if pair.len() > 1 {
             let mut argv: ~[~str] = self.split_words(one);
             if argv.len() > 0 {
                 let two = self.parse_pipeline(pair[1].trim());
                 let program: ~str = argv.remove(0);
-                println!("{:?} -> {:?}", pair[1].trim(), one);
-                self.pipe_input(program, argv, two)
+                if cmd_line.contains_char('|') { 
+                    self.pipe_input(program, argv, two)
+                }
+                else {
+                    self.pipe_input(program, argv, two)
+                }
             }
             else {
                 None
             }
         }
         else {
-            self.make_process(one)
+            self.make_first_process(one)
         }
     }
 
     fn pipe_input(&mut self, program : &str, argv : ~[~str], two : Option<~run::Process>) 
             -> Option<~run::Process> {
-        println("Piping input");
         match CmdProcess::new(program, argv, None, Some(1)) {
             Some(mut cmdprocess) => { 
                 match cmdprocess.run() {
                     Some(mut process) => {
                         match two {
                             Some(mut p2) => {
-                                println("We have a p2");
                                 let output = p2.finish_with_output();
                                 if output.status.success() {
                                     process.input().write(output.output);
@@ -329,7 +331,6 @@ impl Shell {
                                 Some(~process)
                             }
                             None => {
-                                println("We have NO p2");
                                 Some(~process)
                             }
                         }
@@ -348,8 +349,7 @@ impl Shell {
     }
 
     // For pipeline - first item. Returns Maybe Process.
-    fn make_process(&mut self, cmd_line : &str) -> Option<~run::Process>{
-        println!("Making first process for {:s}", cmd_line);
+    fn make_first_process(&mut self, cmd_line : &str) -> Option<~run::Process>{
         let mut argv: ~[~str] = self.split_words(cmd_line);
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
@@ -388,21 +388,14 @@ impl Shell {
         let mut argv: ~[~str] = self.split_words(command);
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
-            match CmdProcess::new(program, argv, None, None) {
-                Some(mut cmdprocess) => { 
-                    match cmdprocess.run() {
-                        Some(mut process) => {
-                            self.write_output_to_file(
-                                process.finish_with_output(),
-                                file);
-                        }
-                        None => { 
-                            println!("Failed spawning a process for {:s}.", command) 
-                        }
-                    }
-                }    
+            match self.make_process(program, argv, None, None) {
+                Some(mut process) => {
+                    self.write_output_to_file(
+                        process.finish_with_output(),
+                        file);
+                }
                 None => { 
-                    println!("{:s} is not a command.", command) 
+                    println!("Failed spawning a process for {:s}.", command) 
                 }
             }
         }
@@ -436,40 +429,37 @@ impl Shell {
         let mut argv: ~[~str] = self.split_words(command);
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
-            match CmdProcess::new(program, argv, None, Some(1)) {
-                Some(mut cmdprocess) => { 
-                    match cmdprocess.run() {
-                        Some(mut process) => {
-                            match File::open_mode(&Path::new(filename),
-                                                  std::io::Append,
-                                                  std::io::ReadWrite)
-                            {
-                                Some(file) => {
-                                    let proc_input = process.input();
-                                    let mut file_buffer = BufferedReader::new(file);
-                                    proc_input.write(file_buffer.read_to_end());
-                                }
-                                None => {}
-                            }
+            match self.make_process(program, argv, None, Some(1)) {
+                Some(mut process) => {
+                    match File::open_mode(&Path::new(filename),
+                                            std::io::Append,
+                                            std::io::ReadWrite)
+                    {
+                        Some(file) => {
+                            let proc_input = process.input();
+                            let mut file_buffer = BufferedReader::new(file);
+                            proc_input.write(file_buffer.read_to_end());
                         }
-                        None => { 
-                            println!("Failed spawning a process for {:s}.", command) 
-                        }
+                        None => {}
                     }
-                }    
+                }
                 None => { 
-                    println!("{:s} is not a command.", command) 
+                    println!("Failed spawning a process for {:s}.", command) 
                 }
             }
         }
     }
     
-    fn make_fg_process(&mut self, program : ~str, argv : ~[~str]) {
-        match CmdProcess::new(program, argv, Some(0), Some(1)) {
+    fn make_process(&mut self, 
+                    program : ~str,
+                    argv : ~[~str],
+                    stdin: Option<i32>,
+                    stdout: Option<i32>) -> Option<run::Process> {
+        match CmdProcess::new(program, argv, stdin, stdout) {
             Some(mut cmdprocess) => { 
-                cmdprocess.run();
+                cmdprocess.run()
             }    
-            None => { }
+            None => { None }
         }
     }
 

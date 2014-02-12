@@ -222,7 +222,6 @@ impl Shell {
                 }
                 None => {}
             }
-
         }
     }
 
@@ -247,14 +246,7 @@ impl Shell {
     }
 
     fn chdir(&mut self, cmd_line: &str) {
-        let mut argv: ~[~str] =
-            cmd_line.split(' ').filter_map(|x| if x != "" 
-                { 
-                    Some(x.to_owned()) 
-                }
-                else { 
-                    None 
-                }).to_owned_vec();
+        let mut argv: ~[~str] = self.split_words(cmd_line);
         if argv.len() > 0 {
             argv.remove(0);
             let path = Path::new(argv[0]);
@@ -269,15 +261,11 @@ impl Shell {
         else if cmd_line.contains_char('<') {
             self.parse_l_redirect(cmd_line);
         }
+        else if cmd_line.contains_char('|') { 
+            self.parse_pipeline(cmd_line);
+        }
         else {
-            let argv: ~[~str] =
-                cmd_line.split(' ').filter_map(|x| if x != "" 
-                    { 
-                        Some(x.to_owned()) 
-                    }
-                    else { 
-                        None 
-                    }).to_owned_vec();
+            let argv: ~[~str] = self.split_words(cmd_line);
             if argv.len() > 0 {
                 self.parse_process(argv);
             }
@@ -301,15 +289,103 @@ impl Shell {
         }
     }
 
+    fn parse_pipeline(&mut self, cmd_line : &str) -> Option<~run::Process> {
+        let pair : ~[&str] = cmd_line.rsplitn('|', 1).collect();
+        let one = pair[0].trim();
+        println!("one: {:?}", one);
+        if pair.len() > 1 {
+            let mut argv: ~[~str] = self.split_words(one);
+            if argv.len() > 0 {
+                let two = self.parse_pipeline(pair[1].trim());
+                let program: ~str = argv.remove(0);
+                println!("{:?} -> {:?}", pair[1].trim(), one);
+                self.pipe_input(program, argv, two)
+            }
+            else {
+                None
+            }
+        }
+        else {
+            self.make_process(one)
+        }
+    }
+
+    fn pipe_input(&mut self, program : &str, argv : ~[~str], two : Option<~run::Process>) 
+            -> Option<~run::Process> {
+        println("Piping input");
+        match CmdProcess::new(program, argv, None, Some(1)) {
+            Some(mut cmdprocess) => { 
+                match cmdprocess.run() {
+                    Some(mut process) => {
+                        match two {
+                            Some(mut p2) => {
+                                println("We have a p2");
+                                let output = p2.finish_with_output();
+                                if output.status.success() {
+                                    process.input().write(output.output);
+                                    process.close_input();
+                                    process.finish();
+                                }
+                                Some(~process)
+                            }
+                            None => {
+                                println("We have NO p2");
+                                Some(~process)
+                            }
+                        }
+                    }
+                    None => { 
+                        println!("Failed spawning a process for {:s}.", program) ;
+                        None
+                    }
+                }
+            }    
+            None => { 
+                println!("{:s} is not a command.", program);
+                None
+            }
+        }
+    }
+
+    // For pipeline - first item. Returns Maybe Process.
+    fn make_process(&mut self, cmd_line : &str) -> Option<~run::Process>{
+        println!("Making first process for {:s}", cmd_line);
+        let mut argv: ~[~str] = self.split_words(cmd_line);
+        if argv.len() > 0 {
+            let program: ~str = argv.remove(0);
+            match CmdProcess::new(program, argv, None, None) {
+                Some(mut cmdprocess) => { 
+                    match cmdprocess.run() {
+                        Some(process) => {
+                            Some(~process)
+                        }
+                        None => { 
+                            println!("Failed spawning a process for {:s}.", program);
+                            None
+                        }
+                    }
+                }
+                None => { 
+                    println!("{:s} is not a command.", program) ;
+                    None
+                }
+            }
+        }
+        else {None}
+    }
+
+    fn split_words(&mut self, word : &str) -> ~[~str] {
+        word.split(' ').filter_map(
+            |x| if x != "" { Some(x.to_owned()) }
+                else { None }
+            ).to_owned_vec()
+    }
+
     fn parse_r_redirect(&mut self, cmd_line : &str) {
         let pair : ~[&str] = cmd_line.rsplit('>').collect();
         let file = pair[0].trim();
         let command = pair[1].trim();
-        let mut argv: ~[~str] =
-            command.split(' ').filter_map(
-                |x| if x != "" { Some(x.to_owned()) }
-                    else { None }
-                ).to_owned_vec();
+        let mut argv: ~[~str] = self.split_words(command);
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
             match CmdProcess::new(program, argv, None, None) {
@@ -357,12 +433,7 @@ impl Shell {
         let pair : ~[&str] = cmd_line.rsplit('<').collect();
         let filename = pair[0].trim();
         let command = pair[1].trim();
-        let mut argv: ~[~str] =
-            command.split(' ').filter_map(
-                |x| 
-                    if x != "" { Some(x.to_owned()) }
-                    else { None }
-                ).to_owned_vec();
+        let mut argv: ~[~str] = self.split_words(command);
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
             match CmdProcess::new(program, argv, None, Some(1)) {
@@ -398,7 +469,7 @@ impl Shell {
             Some(mut cmdprocess) => { 
                 cmdprocess.run();
             }    
-            None              => { }
+            None => { }
         }
     }
 

@@ -22,6 +22,7 @@ use std::run::ProcessOptions;
 use std::comm::Port;
 use extra::getopts;
 use std::io::signal::{Listener, Interrupt, Signum};
+use std::libc::types::os::arch::posix88::pid_t;
 
 struct Cmd {
     program : ~str,
@@ -102,6 +103,7 @@ struct BackgroundProcess {
     args         : ~[~str],
     exit_port    : Option<Port<ProcessExit>>,
     kill_chan    : Option<Chan<int>>,
+    pid          : Option<i32>,
 }
 impl BackgroundProcess {
     fn new(cmd : Cmd) -> Option<BackgroundProcess> {
@@ -111,14 +113,20 @@ impl BackgroundProcess {
                 args: cmd.argv.to_owned(),
                 exit_port: None,
                 kill_chan: None,
+                pid: None,
             })
         }
         else { None }
     }
-    fn run(&mut self) {
-        let (port, chan) : (Port<ProcessExit>, Chan<ProcessExit>) 
-                = Chan::new();
-        let (killport, killchan) : (Port<int>, Chan<int>) = Chan::new();
+
+    fn run(&mut self) -> Option<pid_t> {
+        // Process exit ports; used for checking dead status.
+        let (port, chan): (Port<ProcessExit>, Chan<ProcessExit>) = Chan::new();
+        // Kill signal ports; sent to struct.
+        let (killport, killchan): (Port<int>, Chan<int>) = Chan::new();
+        // Process ports; these don't leave this function.
+        let (pport, pchan): (Port<Option<pid_t>>, Chan<Option<pid_t>>) 
+                            = Chan::new();
         let command = self.command.to_owned();
         let args = self.args.to_owned();
         spawn(proc() { 
@@ -132,6 +140,7 @@ impl BackgroundProcess {
             let maybe_process = Process::new(command, args, options);
             match maybe_process {
             Some(mut process) => {
+                pchan.try_send_deferred(Some(process.get_id()));
                 let signal = killport.recv();
                 let mut error = None;
                 match signal {
@@ -154,10 +163,13 @@ impl BackgroundProcess {
                 chan.try_send_deferred(process.finish());
             }
             None => {
+                pchan.try_send_deferred(None);
             }}
         });
         self.exit_port = Some(port);
         self.kill_chan = Some(killchan);
+        self.pid = pport.recv();
+        self.pid
     }
 }
 
@@ -205,11 +217,28 @@ impl Shell {
             "history" => {
                 self.show_hist();
             }
+            "jobs" => {
+                self.jobs();
+            }
             "cd" =>  {
                 self.chdir(cmd_line); 
             }
             _ => { 
                 self.run_cmdline(cmd_line);
+            }}
+        }
+    }
+
+    // Nice extra feature: list running jobs.
+    fn jobs(&mut self) {
+        for cmd in self.processes.iter() {
+            print!("{:s}", cmd.command);
+            match cmd.pid {
+            Some(pid) => {
+                println!(" {:i}", pid);
+            }
+            None => {
+                println("");
             }}
         }
     }
@@ -350,12 +379,18 @@ impl Shell {
     }
 
     fn make_bg_process(&mut self, cmd : Cmd) {
+        let name = cmd.program.to_owned();
         match BackgroundProcess::new(cmd) {
         Some(mut process) => {
-            process.run();
-            self.processes.push(~process);
-        }    
-        None          => { 
+            match process.run() {
+            Some(pid) => {
+                println!("{:s} {:i}", name, pid);
+                self.processes.push(~process);
+            }
+            None => {
+            }}
+        }
+        None => { 
         }}
     }
 }

@@ -196,46 +196,51 @@ impl Shell {
             return ();
         });
 
+        self.display_prompt();
+    }
+
+    fn display_prompt(&mut self) {
         // Standard input reader
         let mut stdin = BufferedReader::new(stdin());
-        loop {
-            // Show the prompt
-            print(self.cmd_prompt);
-            stdio::flush();
+        // Show the prompt
+        print(self.cmd_prompt);
+        stdio::flush();
 
-            let line = stdin.read_line().unwrap();
-            let cmd_line = line.trim().to_owned();
-            let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
-            self.disown_dead();
+        let line = stdin.read_line().unwrap();
+        let cmd_line = line.trim().to_owned();
+        let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
+        self.disown_dead();
 
-            // Push commands onto the history
-            match program {
-                "" => {}
-                _  => { 
-                    self.push_hist(cmd_line) 
-                }
+        // Push commands onto the history
+        match program {
+            "" => {}
+            _  => { 
+                self.push_hist(cmd_line) 
             }
+        }
 
-            match program {
-                "" =>  {
-                    continue; 
-                }
-                "exit" =>  { 
-                    self.kill_all();
-                    return; 
-                }
-                "history" => {
-                    self.show_hist();
-                }
-                "jobs" => {
-                    self.jobs();
-                }
-                "cd" =>  {
-                    self.chdir(cmd_line); 
-                }
-                _ => { 
-                    self.run_cmdline(cmd_line);
-                }
+        match program {
+            "" =>  {
+                self.display_prompt(); 
+            }
+            "exit" =>  { 
+                self.kill_all();
+            }
+            "history" => {
+                self.show_hist();
+                self.display_prompt();
+            }
+            "jobs" => {
+                self.jobs();
+                self.display_prompt();
+            }
+            "cd" =>  {
+                self.chdir(cmd_line); 
+                self.display_prompt();
+            }
+            _ => { 
+                self.run_cmdline(cmd_line);
+                self.display_prompt();
             }
         }
     }

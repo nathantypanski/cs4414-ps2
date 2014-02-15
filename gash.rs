@@ -1,5 +1,6 @@
 //
 // gash.rs
+// by Nathan Typanski
 //
 // Starting code for PS2
 // Running on Rust 0.9
@@ -13,16 +14,18 @@ extern mod extra;
 
 use std::{run, os};
 use std::io::buffered::BufferedReader;
+use std::io::{stdin, stdio, File, Truncate, Write};
+use std::io::process::ProcessExit;
+use std::io::signal::{Listener, Interrupt};
 use std::path::posix::Path;
 use std::option::Option;
-use std::io::{stdin, stdio, File, Truncate, Write};
+use std::task::try;
 use std::run::Process;
-use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
-use std::task;
 use std::comm::Port;
+
 use extra::getopts;
-use std::io::signal::{Listener, Interrupt};
+
 use std::libc::types::os::arch::posix88::pid_t;
 use std::libc;
 
@@ -30,6 +33,7 @@ extern {
   pub fn kill(pid: libc::pid_t, sig: libc::c_int) -> libc::c_int;
 }
 
+// The basic unit for a command that could be run.
 struct Cmd {
     program : ~str,
     argv : ~[~str],
@@ -52,24 +56,20 @@ impl Cmd {
     }
 }
 
-trait Command {
-    fn run(&mut self) -> Option<Process>;
-}
-
-struct CmdProcess {
+struct FgProcess {
     command     : ~str,
     args        : ~[~str],
     stdin       : Option<i32>,
     stdout      : Option<i32>,
 }
-impl CmdProcess {
+impl FgProcess {
     fn new(cmd : Cmd,
            stdin : Option<i32>,
            stdout : Option<i32>) 
-        -> Option<CmdProcess> 
+        -> Option<FgProcess> 
     {
         if (cmd_exists(&cmd)) {
-            Some(CmdProcess {
+            Some(FgProcess {
                 command     : cmd.program.to_owned(),
                 args        : cmd.argv.to_owned(),
                 stdin       : stdin,
@@ -78,9 +78,7 @@ impl CmdProcess {
         }
         else { None }
     }
-}
-
-impl Command for CmdProcess {
+    
     fn run(&mut self) -> Option<Process> {
         let command = self.command.to_owned();
         let args = self.args.to_owned();
@@ -95,7 +93,11 @@ impl Command for CmdProcess {
     }
 }
 
-struct BackgroundProcess {
+// Background processes are handled differently, but not *that* differently:
+// we need to keep track of an ProcessExit port for determining whether a
+// process has finished running, as well as a pid for the process (for killing
+// it when the shell terminates).
+struct BgProcess {
     command      : ~str,
     args         : ~[~str],
     exit_port    : Option<Port<ProcessExit>>,
@@ -103,10 +105,10 @@ struct BackgroundProcess {
     stdin       : Option<i32>,
     stdout      : Option<i32>,
 }
-impl BackgroundProcess {
-    fn new(cmd : Cmd) -> Option<BackgroundProcess> {
+impl BgProcess {
+    fn new(cmd : Cmd) -> Option<BgProcess> {
         if (cmd_exists(&cmd)) {
-            Some(BackgroundProcess {
+            Some(BgProcess {
                 command: cmd.program.to_owned(),
                 args: cmd.argv.to_owned(),
                 exit_port: None,
@@ -121,7 +123,8 @@ impl BackgroundProcess {
     fn run(&mut self) -> Option<pid_t> {
         // Process exit ports; used for checking dead status.
         let (port, chan): (Port<ProcessExit>, Chan<ProcessExit>) = Chan::new();
-        // Process ports; these don't leave this function.
+        // Process ports; these don't leave this function and are used for
+        // sending the PID out in the return value.
         let (pidport, pidchan): (Port<Option<pid_t>>, Chan<Option<pid_t>>) 
                             = Chan::new();
         let command = self.command.to_owned();
@@ -136,14 +139,15 @@ impl BackgroundProcess {
             };
             let maybe_process = Process::new(command, args, options);
             match maybe_process {
-            Some(mut process) => {
-                // Send the pid out for the return value
-                pidchan.try_send_deferred(Some(process.get_id()));
-                chan.try_send_deferred(process.finish());
+                Some(mut process) => {
+                    // Send the pid out for the return value
+                    pidchan.try_send_deferred(Some(process.get_id()));
+                    chan.try_send_deferred(process.finish());
+                }
+                None => {
+                    pidchan.try_send_deferred(None);
+                }
             }
-            None => {
-                pidchan.try_send_deferred(None);
-            }}
         });
         self.exit_port = Some(port);
         self.pid = pidport.recv();
@@ -154,7 +158,7 @@ impl BackgroundProcess {
 struct Shell {
     cmd_prompt : ~str,
     history    : ~[~str],
-    processes  : ~[~BackgroundProcess],
+    processes  : ~[~BgProcess],
     broken : bool,
 }
 
@@ -169,11 +173,13 @@ impl Shell {
     }
 
     fn run(&mut self) {
+        // Setup the interrupt handler. Has to happen here, or it won't 
+        // retain control over interrupts.
         let mut listener = Listener::new();
         listener.register(Interrupt);
         let port = listener.port;
         spawn(proc() {
-            task::try(proc() {
+            try(proc() {
                 loop {
                     match port.recv_opt() {
                         Some(Interrupt) => {
@@ -189,41 +195,48 @@ impl Shell {
             });
             return ();
         });
+
+        // Standard input reader
         let mut stdin = BufferedReader::new(stdin());
         loop {
+            // Show the prompt
             print(self.cmd_prompt);
             stdio::flush();
 
             let line = stdin.read_line().unwrap();
             let cmd_line = line.trim().to_owned();
             let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
-            self.kill_dead();
+            self.disown_dead();
+
+            // Push commands onto the history
             match program {
-            "" => {}
-            _  => { 
-                self.push_hist(cmd_line) 
-            }}
+                "" => {}
+                _  => { 
+                    self.push_hist(cmd_line) 
+                }
+            }
 
             match program {
-            "" =>  {
-                continue; 
+                "" =>  {
+                    continue; 
+                }
+                "exit" =>  { 
+                    self.kill_all();
+                    return; 
+                }
+                "history" => {
+                    self.show_hist();
+                }
+                "jobs" => {
+                    self.jobs();
+                }
+                "cd" =>  {
+                    self.chdir(cmd_line); 
+                }
+                _ => { 
+                    self.run_cmdline(cmd_line);
+                }
             }
-            "exit" =>  { 
-                self.kill_all();
-                return; 
-            }
-            "history" => {
-                self.show_hist();
-            }
-            "jobs" => {
-                self.jobs();
-            }
-            "cd" =>  {
-                self.chdir(cmd_line); 
-            }
-            _ => { 
-                self.run_cmdline(cmd_line);
-            }}
         }
     }
 
@@ -232,23 +245,26 @@ impl Shell {
         for cmd in self.processes.iter() {
             print!("{:s}", cmd.command);
             match cmd.pid {
-            Some(pid) => {
-                println!(" {:i}", pid);
+                Some(pid) => {
+                    println!(" {:i}", pid);
+                }
+                None => {
+                    println("");
+                }
             }
-            None => {
-                println("");
-            }}
         }
     }
 
-    fn kill_dead(&mut self) {
+    // Remove dead processes from the list of processes.
+    fn disown_dead(&mut self) {
         let mut dead : ~[uint];
         dead = ~[];
         let mut i = 0;
         for cmd in self.processes.iter() {
-            if is_dead(&cmd.exit_port) {
-                dead.push(i);
-            }
+            borrowed_maybe(&cmd.exit_port, |port| match port.try_recv() {
+                Some(_) => {dead.push(i); Some(i)},
+                _ => None,
+            });
             i += 1;
         }
         for &p in dead.iter() {
@@ -259,16 +275,23 @@ impl Shell {
     fn kill_all(&mut self) {
         for p in self.processes.iter() {
             match p.pid {
-            Some(pid) => {
-                unsafe { 
-                    kill(pid, 15); 
+                Some(pid) => {
+                    unsafe { 
+                        // Kill perhaps isn't the best way to do this, but
+                        // without it we have no way of killing our background
+                        // processes with only the PID - we'd need the process
+                        // object itself, and that can't be moved out of the
+                        // spawn() that it's trapped inside.
+                        kill(pid, 15); 
+                    }
+                }
+                None => {
                 }
             }
-            None => {
-            }}
         }
     }
 
+    // Push a new command onto history.
     fn push_hist(&mut self, cmd_line: &str) {
         &self.history.push(cmd_line.to_owned());
     }
@@ -297,7 +320,9 @@ impl Shell {
             os::change_dir(&path);
         }
     }
-    
+   
+    // Determine the type of the current block, and send it to the right
+    // parsing function.
     fn run_cmdline(&mut self, cmd_line: &str) {
         if cmd_line.contains_char('>') {
             parse_r_redirect(cmd_line);
@@ -313,6 +338,7 @@ impl Shell {
         }
     }
 
+    // Parse a new lone process. Background/foreground it appropriately.
     fn parse_process(&mut self, cmd_line : &str) -> Option<Process>{
         maybe(Cmd::new(cmd_line), |cmd| {
             if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
@@ -329,6 +355,7 @@ impl Shell {
         })
     }
 
+    // Parse a process pipeline, and redirect stdin/stdout appropriately.
     fn parse_pipeline(&mut self, cmd_line : &str) -> Option<~run::Process> {
         let pair : ~[&str] = cmd_line.rsplitn('|', 1).collect();
         maybe(Cmd::new(pair[0].trim()), |cmd| {
@@ -342,45 +369,53 @@ impl Shell {
         })
     }
 
+    // Redirect the stdout of Process two into the stdin of `cmd`, and return
+    // the process created from `cmd`.
     fn pipe_input(&mut self,
                   cmd : Cmd,
                   two : Option<~run::Process>) -> Option<~run::Process> {
         match make_process(cmd, None, Some(1)) {
-        Some(mut process) => {
-            match two {
-            Some(mut p2) => {
-                let output = p2.finish_with_output();
-                if output.status.success() {
-                    process.input().write(output.output);
-                    process.close_input();
-                    process.finish();
+            Some(mut process) => {
+                match two {
+                    Some(mut p2) => {
+                        let output = p2.finish_with_output();
+                        if output.status.success() {
+                            process.input().write(output.output);
+                            process.close_input();
+                            process.finish();
+                        }
+                        Some(~process)
+                    }
+                    None => {
+                        println("No two remain.");
+                        Some(~process)
+                    }
                 }
-                Some(~process)
             }
-            None => {
-                println("No two remain.");
-                Some(~process)
-            }}
+            None => { 
+                None
+            }
         }
-        None => { 
-            None
-        }}
     }
 
+    // Make a new background process, and push it onto our stack of tracked
+    // background processes.
     fn make_bg_process(&mut self, cmd : Cmd) {
         let name = cmd.program.to_owned();
-        match BackgroundProcess::new(cmd) {
-        Some(mut process) => {
-            match process.run() {
-            Some(pid) => {
-                println!("{:s} {:i}", name, pid);
-                self.processes.push(~process);
+        match BgProcess::new(cmd) {
+            Some(mut process) => {
+                match process.run() {
+                    Some(pid) => {
+                        println!("{:s} {:i}", name, pid);
+                        self.processes.push(~process);
+                    }
+                    None => {
+                    }
+                }
             }
-            None => {
-            }}
+            None => { 
+            }
         }
-        None => { 
-        }}
     }
 }
 
@@ -399,8 +434,8 @@ fn get_cmdline_from_args() -> Option<~str> {
     
     if matches.opt_present("c") {
         let cmd_str = match matches.opt_str("c") {
-                      Some(cmd_str) => {cmd_str.to_owned()}, 
-                      None          => {~""}
+            Some(cmd_str) => {cmd_str.to_owned()}, 
+            None          => {~""}
         };
         return Some(cmd_str);
     } else {
@@ -408,24 +443,28 @@ fn get_cmdline_from_args() -> Option<~str> {
     }
 }
 
+// Determine whether a command exists using "which".
 fn cmd_exists(command : &Cmd) -> bool {
     let ret = run::process_output("which", [command.program.to_owned()]);
     return ret.expect("exit code error.").status.success();
 }
 
+// Returns true if a (presuambly background) process has finished running.
 fn is_dead(exit_port : &Option<Port<ProcessExit>>) -> bool {
     let mut dead = false;
     match *exit_port {
-    Some(ref p) => {
-        match p.try_recv() {
-        Some(_) => {
-            dead = true;
-        },
-        None => {
-        }}
+        Some(ref p) => {
+            match p.try_recv() {
+                Some(_) => {
+                    dead = true;
+                },
+                None => {
+                }
+            }
+        }
+        _ => {
+        }
     }
-    _ => {
-    }}
     dead
 }
 
@@ -438,7 +477,7 @@ fn split_words(word : &str) -> ~[~str] {
 fn make_process(cmd : Cmd,
                 stdin: Option<i32>,
                 stdout: Option<i32>) -> Option<run::Process> {
-    maybe(CmdProcess::new(cmd, stdin, stdout), 
+    maybe(FgProcess::new(cmd, stdin, stdout), 
           |mut cmdprocess| cmdprocess.run())
 }
 
@@ -446,20 +485,22 @@ fn parse_l_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('<').collect();
     let filename = pair[0].trim();
     match maybe(Cmd::new(pair[1].trim()), |c| make_process(c, None, Some(1))) {
-    Some(mut process) => {
-        match File::open_mode(&Path::new(filename),
-                                std::io::Append,
-                                std::io::ReadWrite) {
-        Some(file) => {
-            let proc_input = process.input();
-            let mut file_buffer = BufferedReader::new(file);
-            proc_input.write(file_buffer.read_to_end());
+        Some(mut process) => {
+            match File::open_mode(&Path::new(filename),
+                                    std::io::Append,
+                                    std::io::ReadWrite) {
+                Some(file) => {
+                    let proc_input = process.input();
+                    let mut file_buffer = BufferedReader::new(file);
+                    proc_input.write(file_buffer.read_to_end());
+                }
+                None => {
+                }
+            }
         }
-        None => {
-        }}
+        None => { 
+        }
     }
-    None => { 
-    }}
 }
 
 fn write_output_to_file(output : std::run::ProcessOutput,
@@ -485,7 +526,6 @@ fn write_output_to_file(output : std::run::ProcessOutput,
 fn parse_r_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('>').collect();
     let file = pair[0].trim();
-    //let command = pair[1].trim();
     let cmd = Cmd::new(pair[1].trim());
     match maybe(cmd, |c| make_process(c, None, None)) {
         Some(mut process) => {
@@ -498,13 +538,20 @@ fn parse_r_redirect(cmd_line : &str) {
     }
 }
 
-/* Describes a computation that could fail.
- * If v is Some(...), then f is called on v and the result is returned.
- * Otherwise, None is returned.
- */
+// Describes a computation that could fail.
+// If v is Some(...), then f is called on v and the result is returned.
+// Otherwise, None is returned.
 fn maybe<A, B>(v : Option<A>, f : |A| -> Option<B>) -> Option<B> {
     match v {
         Some(v) => f(v),
+        None    => None,
+    }
+}
+
+// Same as maybe(v, f), but for &v.
+fn borrowed_maybe<A, B>(v : &Option<A>, f : |&A| -> Option<B>) -> Option<B> {
+    match *v {
+        Some(ref v) => f(v),
         None    => None,
     }
 }
@@ -513,12 +560,13 @@ fn main() {
     let opt_cmd_line = get_cmdline_from_args();
     
     match opt_cmd_line {
-    Some(cmd_line) => {
-        let mut shell = Shell::new("");
-        shell.run_cmdline(cmd_line);
+        Some(cmd_line) => {
+            let mut shell = Shell::new("");
+            shell.run_cmdline(cmd_line);
+        }
+        None => {
+            let mut shell = Shell::new("gash > ");
+            shell.run();
+        }
     }
-    None => {
-        let mut shell = Shell::new("gash > ");
-        shell.run();
-    }}
 }

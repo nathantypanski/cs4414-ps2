@@ -134,7 +134,6 @@ impl BackgroundProcess {
             Some(mut process) => {
                 let signal = killport.recv();
                 let mut error = None;
-                println("Background signal handler started");
                 match signal {
                 9 => { 
                     io_error::cond.trap(|e: IoError| {
@@ -394,7 +393,6 @@ fn is_dead(exit_port : &Option<Port<ProcessExit>>) -> bool {
     let mut dead = false;
     match *exit_port {
     Some(ref p) => {
-        println("DEBUG: doing shutdown");
         match p.try_recv() {
         Some (exitstatus) => {
             dead = exitstatus.success();
@@ -499,7 +497,7 @@ fn rupt(port: Port<Signum>) {
                     println("Got Interrupt'ed");
                 }
                 _ => {
-                    println("nothing");
+                    break;
                 }}
             }
             None => {

@@ -21,7 +21,7 @@ use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
 use std::comm::Port;
 use extra::getopts;
-use std::io::signal::{Listener, Interrupt, Signum};
+//use std::io::signal::{Listener, Interrupt, Signum};
 use std::libc::types::os::arch::posix88::pid_t;
 
 struct Cmd {
@@ -522,6 +522,11 @@ fn parse_r_redirect(cmd_line : &str) {
     }}
 }
 
+/*
+    let mut listener = Listener::new();
+    listener.register(Interrupt);
+*/
+/*
 fn rupt(port: Port<Signum>) {
     do spawn {
         loop{
@@ -539,8 +544,8 @@ fn rupt(port: Port<Signum>) {
             }}
         }
     }
-    Shell::new("gash > ").run();
 }
+*/
 
 fn main() {
     let opt_cmd_line = get_cmdline_from_args();
@@ -551,8 +556,6 @@ fn main() {
         shell.run_cmdline(cmd_line);
     }
     None => {
-        let mut listener = Listener::new();
-        listener.register(Interrupt);
-        rupt(listener.port);
+        Shell::new("gash > ").run();
     }}
 }

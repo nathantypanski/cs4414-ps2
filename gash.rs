@@ -15,14 +15,20 @@ use std::{run, os};
 use std::io::buffered::BufferedReader;
 use std::path::posix::Path;
 use std::option::Option;
-use std::io::{stdin, stdio, IoError, io_error, File, Truncate, Write};
+use std::io::{stdin, stdio, File, Truncate, Write};
 use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
+use std::task;
 use std::comm::Port;
 use extra::getopts;
-//use std::io::signal::{Listener, Interrupt, Signum};
+use std::io::signal::{Listener, Interrupt};
 use std::libc::types::os::arch::posix88::pid_t;
+use std::libc;
+
+extern {
+  pub fn kill(pid: libc::pid_t, sig: libc::c_int) -> libc::c_int;
+}
 
 struct Cmd {
     program : ~str,
@@ -72,17 +78,8 @@ impl CmdProcess {
         }
         else { None }
     }
-
-    /*
-    fn set_stdin(&mut self, stdin : Option<i32>) {
-        self.stdin = stdin;
-    }
-
-    fn set_stdout(&mut self, stdout : Option<i32>) {
-        self.stdout = stdout;
-    }
-    */
 }
+
 impl Command for CmdProcess {
     fn run(&mut self) -> Option<Process> {
         let command = self.command.to_owned();
@@ -102,8 +99,9 @@ struct BackgroundProcess {
     command      : ~str,
     args         : ~[~str],
     exit_port    : Option<Port<ProcessExit>>,
-    kill_chan    : Option<Chan<int>>,
     pid          : Option<i32>,
+    stdin       : Option<i32>,
+    stdout      : Option<i32>,
 }
 impl BackgroundProcess {
     fn new(cmd : Cmd) -> Option<BackgroundProcess> {
@@ -112,8 +110,9 @@ impl BackgroundProcess {
                 command: cmd.program.to_owned(),
                 args: cmd.argv.to_owned(),
                 exit_port: None,
-                kill_chan: None,
                 pid: None,
+                stdin: None,
+                stdout: None,
             })
         }
         else { None }
@@ -122,10 +121,8 @@ impl BackgroundProcess {
     fn run(&mut self) -> Option<pid_t> {
         // Process exit ports; used for checking dead status.
         let (port, chan): (Port<ProcessExit>, Chan<ProcessExit>) = Chan::new();
-        // Kill signal ports; sent to struct.
-        let (killport, killchan): (Port<int>, Chan<int>) = Chan::new();
         // Process ports; these don't leave this function.
-        let (pport, pchan): (Port<Option<pid_t>>, Chan<Option<pid_t>>) 
+        let (pidport, pidchan): (Port<Option<pid_t>>, Chan<Option<pid_t>>) 
                             = Chan::new();
         let command = self.command.to_owned();
         let args = self.args.to_owned();
@@ -140,35 +137,16 @@ impl BackgroundProcess {
             let maybe_process = Process::new(command, args, options);
             match maybe_process {
             Some(mut process) => {
-                pchan.try_send_deferred(Some(process.get_id()));
-                let signal = killport.recv();
-                let mut error = None;
-                match signal {
-                9 => { 
-                    io_error::cond.trap(|e: IoError| {
-                        error = Some(e);
-                        }).inside(|| {
-                            process.force_destroy() 
-                        })
-                }
-                15 => {
-                    io_error::cond.trap(|e: IoError| {
-                        error = Some(e);
-                        }).inside(|| {
-                            process.force_destroy() 
-                        })
-                }
-                _ => {
-                }}
+                // Send the pid out for the return value
+                pidchan.try_send_deferred(Some(process.get_id()));
                 chan.try_send_deferred(process.finish());
             }
             None => {
-                pchan.try_send_deferred(None);
+                pidchan.try_send_deferred(None);
             }}
         });
         self.exit_port = Some(port);
-        self.kill_chan = Some(killchan);
-        self.pid = pport.recv();
+        self.pid = pidport.recv();
         self.pid
     }
 }
@@ -191,6 +169,26 @@ impl Shell {
     }
 
     fn run(&mut self) {
+        let mut listener = Listener::new();
+        listener.register(Interrupt);
+        let port = listener.port;
+        spawn(proc() {
+            task::try(proc() {
+                loop {
+                    match port.recv_opt() {
+                        Some(Interrupt) => {
+                        }
+                        None => {
+                            break;
+                        }
+                        _ => {
+                        }
+                    }
+                }
+                return 0
+            });
+            return ();
+        });
         let mut stdin = BufferedReader::new(stdin());
         loop {
             print(self.cmd_prompt);
@@ -260,9 +258,11 @@ impl Shell {
 
     fn kill_all(&mut self) {
         for p in self.processes.iter() {
-            match p.kill_chan {
-            Some(ref kill_channel) => {
-                kill_channel.try_send_deferred(15);
+            match p.pid {
+            Some(pid) => {
+                unsafe { 
+                    kill(pid, 15); 
+                }
             }
             None => {
             }}
@@ -314,8 +314,7 @@ impl Shell {
     }
 
     fn parse_process(&mut self, cmd_line : &str) -> Option<Process>{
-        match Cmd::new(cmd_line) {
-        Some(cmd) => {
+        maybe(Cmd::new(cmd_line), |cmd| {
             if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
                 let mut argv = cmd.argv.to_owned();
                 argv.pop();
@@ -327,30 +326,20 @@ impl Shell {
             else {
                 make_process(cmd, Some(0), Some(1))
             }
-        }
-        None => {
-            None
-        }}
+        })
     }
 
     fn parse_pipeline(&mut self, cmd_line : &str) -> Option<~run::Process> {
         let pair : ~[&str] = cmd_line.rsplitn('|', 1).collect();
-        match Cmd::new(pair[0].trim()) {
-        Some(cmd) => {
+        maybe(Cmd::new(pair[0].trim()), |cmd| {
             if pair.len() > 1 {
                 let two = self.parse_pipeline(pair[1].trim());
                 self.pipe_input(cmd, two)
             }
             else {
-                match make_process(cmd, None, None) {
-                Some(process) => Some(~process),
-                None => None 
-                }
+                maybe(make_process(cmd, None, None), |process| Some(~process))
             }
-        }
-        None => {
-            None
-        }}
+        })
     }
 
     fn pipe_input(&mut self,
@@ -429,8 +418,8 @@ fn is_dead(exit_port : &Option<Port<ProcessExit>>) -> bool {
     match *exit_port {
     Some(ref p) => {
         match p.try_recv() {
-        Some (exitstatus) => {
-            dead = exitstatus.success();
+        Some(_) => {
+            dead = true;
         },
         None => {
         }}
@@ -449,37 +438,27 @@ fn split_words(word : &str) -> ~[~str] {
 fn make_process(cmd : Cmd,
                 stdin: Option<i32>,
                 stdout: Option<i32>) -> Option<run::Process> {
-    match CmdProcess::new(cmd, stdin, stdout) {
-    Some(mut cmdprocess) => { 
-        cmdprocess.run()
-    }    
-    None => { 
-        None 
-    }}
+    maybe(CmdProcess::new(cmd, stdin, stdout), 
+          |mut cmdprocess| cmdprocess.run())
 }
 
 fn parse_l_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('<').collect();
     let filename = pair[0].trim();
-    match Cmd::new(pair[1].trim()) {
-    Some(cmd) => {
-        match make_process(cmd, None, Some(1)) {
-        Some(mut process) => {
-            match File::open_mode(&Path::new(filename),
-                                    std::io::Append,
-                                    std::io::ReadWrite) {
-            Some(file) => {
-                let proc_input = process.input();
-                let mut file_buffer = BufferedReader::new(file);
-                proc_input.write(file_buffer.read_to_end());
-            }
-            None => {
-            }}
+    match maybe(Cmd::new(pair[1].trim()), |c| make_process(c, None, Some(1))) {
+    Some(mut process) => {
+        match File::open_mode(&Path::new(filename),
+                                std::io::Append,
+                                std::io::ReadWrite) {
+        Some(file) => {
+            let proc_input = process.input();
+            let mut file_buffer = BufferedReader::new(file);
+            proc_input.write(file_buffer.read_to_end());
         }
-        None => { 
+        None => {
         }}
     }
-    None => {
+    None => { 
     }}
 }
 
@@ -507,45 +486,28 @@ fn parse_r_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('>').collect();
     let file = pair[0].trim();
     //let command = pair[1].trim();
-    match Cmd::new(pair[1].trim()) {
-    Some(cmd) => {
-        match make_process(cmd, None, None) {
+    let cmd = Cmd::new(pair[1].trim());
+    match maybe(cmd, |c| make_process(c, None, None)) {
         Some(mut process) => {
             write_output_to_file(
                 process.finish_with_output(),
                 file);
         }
         None => { 
-        }}
-    }
-    None => {
-    }}
-}
-
-/*
-    let mut listener = Listener::new();
-    listener.register(Interrupt);
-*/
-/*
-fn rupt(port: Port<Signum>) {
-    do spawn {
-        loop{
-            match port.recv_opt() {
-            Some(recv) => {
-                match recv {
-                Interrupt => { 
-                    println("Got Interrupt'ed");
-                }
-                _ => {
-                    break;
-                }}
-            }
-            None => {
-            }}
         }
     }
 }
-*/
+
+/* Describes a computation that could fail.
+ * If v is Some(...), then f is called on v and the result is returned.
+ * Otherwise, None is returned.
+ */
+fn maybe<A, B>(v : Option<A>, f : |A| -> Option<B>) -> Option<B> {
+    match v {
+        Some(v) => f(v),
+        None    => None,
+    }
+}
 
 fn main() {
     let opt_cmd_line = get_cmdline_from_args();
@@ -556,6 +518,7 @@ fn main() {
         shell.run_cmdline(cmd_line);
     }
     None => {
-        Shell::new("gash > ").run();
+        let mut shell = Shell::new("gash > ");
+        shell.run();
     }}
 }

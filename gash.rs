@@ -123,25 +123,6 @@ impl BackgroundProcess {
         else { None }
     }
 
-    fn new_fg(cmd : Cmd,
-           stdin : Option<i32>,
-           stdout : Option<i32>) 
-        -> Option<BackgroundProcess> 
-    {
-        if (cmd_exists(&cmd)) {
-            Some(BackgroundProcess {
-                command     : cmd.program.to_owned(),
-                args        : cmd.argv.to_owned(),
-                exit_port: None,
-                kill_chan: None,
-                pid: None,
-                stdin       : stdin,
-                stdout      : stdout,
-            })
-        }
-        else { None }
-    }
-
     fn run(&mut self) -> Option<pid_t> {
         // Process exit ports; used for checking dead status.
         let (port, chan): (Port<ProcessExit>, Chan<ProcessExit>) = Chan::new();

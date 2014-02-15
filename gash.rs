@@ -449,25 +449,6 @@ fn cmd_exists(command : &Cmd) -> bool {
     return ret.expect("exit code error.").status.success();
 }
 
-// Returns true if a (presuambly background) process has finished running.
-fn is_dead(exit_port : &Option<Port<ProcessExit>>) -> bool {
-    let mut dead = false;
-    match *exit_port {
-        Some(ref p) => {
-            match p.try_recv() {
-                Some(_) => {
-                    dead = true;
-                },
-                None => {
-                }
-            }
-        }
-        _ => {
-        }
-    }
-    dead
-}
-
 fn split_words(word : &str) -> ~[~str] {
     word.split(' ').filter_map(
         |x| if x != "" { Some(x.to_owned()) } else { None }

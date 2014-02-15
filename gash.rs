@@ -15,14 +15,20 @@ use std::{run, os};
 use std::io::buffered::BufferedReader;
 use std::path::posix::Path;
 use std::option::Option;
-use std::io::{stdin, stdio, IoError, io_error, File, Truncate, Write};
+use std::io::{stdin, stdio, File, Truncate, Write};
 use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
+use std::task;
 use std::comm::Port;
 use extra::getopts;
-//use std::io::signal::{Listener, Interrupt};
+use std::io::signal::{Listener, Interrupt};
 use std::libc::types::os::arch::posix88::pid_t;
+use std::libc;
+
+extern {
+  pub fn kill(pid: libc::pid_t, sig: libc::c_int) -> libc::c_int;
+}
 
 struct Cmd {
     program : ~str,
@@ -72,17 +78,8 @@ impl CmdProcess {
         }
         else { None }
     }
-
-    /*
-    fn set_stdin(&mut self, stdin : Option<i32>) {
-        self.stdin = stdin;
-    }
-
-    fn set_stdout(&mut self, stdout : Option<i32>) {
-        self.stdout = stdout;
-    }
-    */
 }
+
 impl Command for CmdProcess {
     fn run(&mut self) -> Option<Process> {
         let command = self.command.to_owned();
@@ -102,7 +99,6 @@ struct BackgroundProcess {
     command      : ~str,
     args         : ~[~str],
     exit_port    : Option<Port<ProcessExit>>,
-    kill_chan    : Option<Chan<int>>,
     pid          : Option<i32>,
     stdin       : Option<i32>,
     stdout      : Option<i32>,
@@ -114,7 +110,6 @@ impl BackgroundProcess {
                 command: cmd.program.to_owned(),
                 args: cmd.argv.to_owned(),
                 exit_port: None,
-                kill_chan: None,
                 pid: None,
                 stdin: None,
                 stdout: None,
@@ -126,10 +121,8 @@ impl BackgroundProcess {
     fn run(&mut self) -> Option<pid_t> {
         // Process exit ports; used for checking dead status.
         let (port, chan): (Port<ProcessExit>, Chan<ProcessExit>) = Chan::new();
-        // Kill signal ports; sent to struct.
-        let (killport, killchan): (Port<int>, Chan<int>) = Chan::new();
         // Process ports; these don't leave this function.
-        let (pport, pchan): (Port<Option<pid_t>>, Chan<Option<pid_t>>) 
+        let (pidport, pidchan): (Port<Option<pid_t>>, Chan<Option<pid_t>>) 
                             = Chan::new();
         let command = self.command.to_owned();
         let args = self.args.to_owned();
@@ -145,35 +138,15 @@ impl BackgroundProcess {
             match maybe_process {
             Some(mut process) => {
                 // Send the pid out for the return value
-                pchan.try_send_deferred(Some(process.get_id()));
-                let signal = killport.recv();
-                let mut error = None;
-                match signal {
-                9 => { 
-                    io_error::cond.trap(|e: IoError| {
-                        error = Some(e);
-                        }).inside(|| {
-                            process.force_destroy() 
-                        })
-                }
-                15 => {
-                    io_error::cond.trap(|e: IoError| {
-                        error = Some(e);
-                        }).inside(|| {
-                            process.force_destroy() 
-                        })
-                }
-                _ => {
-                }}
+                pidchan.try_send_deferred(Some(process.get_id()));
                 chan.try_send_deferred(process.finish());
             }
             None => {
-                pchan.try_send_deferred(None);
+                pidchan.try_send_deferred(None);
             }}
         });
         self.exit_port = Some(port);
-        self.kill_chan = Some(killchan);
-        self.pid = pport.recv();
+        self.pid = pidport.recv();
         self.pid
     }
 }
@@ -196,6 +169,26 @@ impl Shell {
     }
 
     fn run(&mut self) {
+        let mut listener = Listener::new();
+        listener.register(Interrupt);
+        let port = listener.port;
+        spawn(proc() {
+            task::try(proc() {
+                loop {
+                    match port.recv_opt() {
+                        Some(Interrupt) => {
+                        }
+                        None => {
+                            break;
+                        }
+                        _ => {
+                        }
+                    }
+                }
+                return 0
+            });
+            return ();
+        });
         let mut stdin = BufferedReader::new(stdin());
         loop {
             print(self.cmd_prompt);
@@ -265,9 +258,11 @@ impl Shell {
 
     fn kill_all(&mut self) {
         for p in self.processes.iter() {
-            match p.kill_chan {
-            Some(ref kill_channel) => {
-                kill_channel.try_send_deferred(15);
+            match p.pid {
+            Some(pid) => {
+                unsafe { 
+                    kill(pid, 15); 
+                }
             }
             None => {
             }}
@@ -423,8 +418,8 @@ fn is_dead(exit_port : &Option<Port<ProcessExit>>) -> bool {
     match *exit_port {
     Some(ref p) => {
         match p.try_recv() {
-        Some (exitstatus) => {
-            dead = exitstatus.success();
+        Some(_) => {
+            dead = true;
         },
         None => {
         }}
@@ -509,7 +504,7 @@ fn parse_r_redirect(cmd_line : &str) {
  */
 fn maybe<A, B>(v : Option<A>, f : |A| -> Option<B>) -> Option<B> {
     match v {
-        Some(k) => f(k),
+        Some(v) => f(v),
         None    => None,
     }
 }
@@ -523,6 +518,7 @@ fn main() {
         shell.run_cmdline(cmd_line);
     }
     None => {
-        Shell::new("gash > ").run();
+        let mut shell = Shell::new("gash > ");
+        shell.run();
     }}
 }

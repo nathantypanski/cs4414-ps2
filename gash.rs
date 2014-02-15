@@ -172,7 +172,7 @@ impl Shell {
         }
     }
 
-    fn run(&mut self) {
+    fn start(&mut self) {
         // Setup the interrupt handler. Has to happen here, or it won't 
         // retain control over interrupts.
         let mut listener = Listener::new();
@@ -552,7 +552,7 @@ fn main() {
         }
         None => {
             let mut shell = Shell::new("gash > ");
-            shell.run();
+            shell.start();
         }
     }
 }

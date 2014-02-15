@@ -21,7 +21,7 @@ use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
 use std::comm::Port;
 use extra::getopts;
-//use std::io::signal::{Listener, Interrupt, Signum};
+//use std::io::signal::{Listener, Interrupt};
 use std::libc::types::os::arch::posix88::pid_t;
 
 struct Cmd {
@@ -104,6 +104,8 @@ struct BackgroundProcess {
     exit_port    : Option<Port<ProcessExit>>,
     kill_chan    : Option<Chan<int>>,
     pid          : Option<i32>,
+    stdin       : Option<i32>,
+    stdout      : Option<i32>,
 }
 impl BackgroundProcess {
     fn new(cmd : Cmd) -> Option<BackgroundProcess> {
@@ -114,6 +116,27 @@ impl BackgroundProcess {
                 exit_port: None,
                 kill_chan: None,
                 pid: None,
+                stdin: None,
+                stdout: None,
+            })
+        }
+        else { None }
+    }
+
+    fn new_fg(cmd : Cmd,
+           stdin : Option<i32>,
+           stdout : Option<i32>) 
+        -> Option<BackgroundProcess> 
+    {
+        if (cmd_exists(&cmd)) {
+            Some(BackgroundProcess {
+                command     : cmd.program.to_owned(),
+                args        : cmd.argv.to_owned(),
+                exit_port: None,
+                kill_chan: None,
+                pid: None,
+                stdin       : stdin,
+                stdout      : stdout,
             })
         }
         else { None }
@@ -140,6 +163,7 @@ impl BackgroundProcess {
             let maybe_process = Process::new(command, args, options);
             match maybe_process {
             Some(mut process) => {
+                // Send the pid out for the return value
                 pchan.try_send_deferred(Some(process.get_id()));
                 let signal = killport.recv();
                 let mut error = None;
@@ -314,8 +338,7 @@ impl Shell {
     }
 
     fn parse_process(&mut self, cmd_line : &str) -> Option<Process>{
-        match Cmd::new(cmd_line) {
-        Some(cmd) => {
+        maybe(Cmd::new(cmd_line), |cmd| {
             if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
                 let mut argv = cmd.argv.to_owned();
                 argv.pop();
@@ -327,30 +350,20 @@ impl Shell {
             else {
                 make_process(cmd, Some(0), Some(1))
             }
-        }
-        None => {
-            None
-        }}
+        })
     }
 
     fn parse_pipeline(&mut self, cmd_line : &str) -> Option<~run::Process> {
         let pair : ~[&str] = cmd_line.rsplitn('|', 1).collect();
-        match Cmd::new(pair[0].trim()) {
-        Some(cmd) => {
+        maybe(Cmd::new(pair[0].trim()), |cmd| {
             if pair.len() > 1 {
                 let two = self.parse_pipeline(pair[1].trim());
                 self.pipe_input(cmd, two)
             }
             else {
-                match make_process(cmd, None, None) {
-                Some(process) => Some(~process),
-                None => None 
-                }
+                maybe(make_process(cmd, None, None), |process| Some(~process))
             }
-        }
-        None => {
-            None
-        }}
+        })
     }
 
     fn pipe_input(&mut self,
@@ -449,37 +462,27 @@ fn split_words(word : &str) -> ~[~str] {
 fn make_process(cmd : Cmd,
                 stdin: Option<i32>,
                 stdout: Option<i32>) -> Option<run::Process> {
-    match CmdProcess::new(cmd, stdin, stdout) {
-    Some(mut cmdprocess) => { 
-        cmdprocess.run()
-    }    
-    None => { 
-        None 
-    }}
+    maybe(CmdProcess::new(cmd, stdin, stdout), 
+          |mut cmdprocess| cmdprocess.run())
 }
 
 fn parse_l_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('<').collect();
     let filename = pair[0].trim();
-    match Cmd::new(pair[1].trim()) {
-    Some(cmd) => {
-        match make_process(cmd, None, Some(1)) {
-        Some(mut process) => {
-            match File::open_mode(&Path::new(filename),
-                                    std::io::Append,
-                                    std::io::ReadWrite) {
-            Some(file) => {
-                let proc_input = process.input();
-                let mut file_buffer = BufferedReader::new(file);
-                proc_input.write(file_buffer.read_to_end());
-            }
-            None => {
-            }}
+    match maybe(Cmd::new(pair[1].trim()), |c| make_process(c, None, Some(1))) {
+    Some(mut process) => {
+        match File::open_mode(&Path::new(filename),
+                                std::io::Append,
+                                std::io::ReadWrite) {
+        Some(file) => {
+            let proc_input = process.input();
+            let mut file_buffer = BufferedReader::new(file);
+            proc_input.write(file_buffer.read_to_end());
         }
-        None => { 
+        None => {
         }}
     }
-    None => {
+    None => { 
     }}
 }
 
@@ -507,45 +510,28 @@ fn parse_r_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('>').collect();
     let file = pair[0].trim();
     //let command = pair[1].trim();
-    match Cmd::new(pair[1].trim()) {
-    Some(cmd) => {
-        match make_process(cmd, None, None) {
+    let cmd = Cmd::new(pair[1].trim());
+    match maybe(cmd, |c| make_process(c, None, None)) {
         Some(mut process) => {
             write_output_to_file(
                 process.finish_with_output(),
                 file);
         }
         None => { 
-        }}
-    }
-    None => {
-    }}
-}
-
-/*
-    let mut listener = Listener::new();
-    listener.register(Interrupt);
-*/
-/*
-fn rupt(port: Port<Signum>) {
-    do spawn {
-        loop{
-            match port.recv_opt() {
-            Some(recv) => {
-                match recv {
-                Interrupt => { 
-                    println("Got Interrupt'ed");
-                }
-                _ => {
-                    break;
-                }}
-            }
-            None => {
-            }}
         }
     }
 }
-*/
+
+/* Describes a computation that could fail.
+ * If v is Some(...), then f is called on v and the result is returned.
+ * Otherwise, None is returned.
+ */
+fn maybe<A, B>(v : Option<A>, f : |A| -> Option<B>) -> Option<B> {
+    match v {
+        Some(k) => f(k),
+        None    => None,
+    }
+}
 
 fn main() {
     let opt_cmd_line = get_cmdline_from_args();

@@ -181,26 +181,10 @@ impl Shell {
 
     fn run(&mut self) {
         let mut stdin = BufferedReader::new(stdin());
-        let mut interrupt = Listener::new();
-        interrupt.register(Interrupt);
-        let (port, chan) : (Port<bool>, Chan<bool>) 
-                = Chan::new();
-        self.rupt(interrupt.port, chan);
         loop {
-            let port = &port;
             print(self.cmd_prompt);
             stdio::flush();
 
-            match port.try_recv() {
-            Some(val) => {
-                if val {
-                    println("Got dead signal");
-                    break;
-                }
-            }
-            None => {
-            }}
-            
             let line = stdin.read_line().unwrap();
             let cmd_line = line.trim().to_owned();
             let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
@@ -231,30 +215,6 @@ impl Shell {
         }
     }
 
-    fn rupt(&mut self, port: Port<Signum>, chan : Chan<bool>) {
-        do spawn {
-            loop {
-                match port.recv_opt() {
-                    Some(recv) => {
-                        match recv {
-                        Interrupt => { 
-                            println("Got Interrupt'ed");
-                            match chan.try_send_deferred(true) {
-                            true => {
-                                break;
-                            }
-                            false => {
-                                continue;
-                            }}
-                        }
-                        _ => {
-                        }}
-                    }
-                    None => {
-                    }}
-            }
-        }
-    }
     fn kill_dead(&mut self) {
         let mut dead : ~[uint];
         dead = ~[];
@@ -516,7 +476,6 @@ fn parse_r_redirect(cmd_line : &str) {
     //let command = pair[1].trim();
     match Cmd::new(pair[1].trim()) {
     Some(cmd) => {
-    //let mut argv: ~[~str] = split_words(command);
         match make_process(cmd, None, None) {
         Some(mut process) => {
             write_output_to_file(
@@ -530,18 +489,37 @@ fn parse_r_redirect(cmd_line : &str) {
     }}
 }
 
+fn rupt(port: Port<Signum>) {
+    do spawn {
+        loop{
+            match port.recv_opt() {
+            Some(recv) => {
+                match recv {
+                Interrupt => { 
+                    println("Got Interrupt'ed");
+                }
+                _ => {
+                    println("nothing");
+                }}
+            }
+            None => {
+            }}
+        }
+    }
+    Shell::new("gash > ").run();
+}
 
 fn main() {
     let opt_cmd_line = get_cmdline_from_args();
     
     match opt_cmd_line {
-        Some(cmd_line) => {
-            let mut shell = Shell::new("");
-            shell.run_cmdline(cmd_line);
-        }
-        None           => {
-            Shell::new("gash > ").run();
-        }
+    Some(cmd_line) => {
+        let mut shell = Shell::new("");
+        shell.run_cmdline(cmd_line);
     }
-
+    None => {
+        let mut listener = Listener::new();
+        listener.register(Interrupt);
+        rupt(listener.port);
+    }}
 }

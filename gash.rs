@@ -19,7 +19,9 @@ use std::io::{stdin, stdio, IoError, io_error, File, Truncate, Write};
 use std::run::Process;
 use std::io::process::ProcessExit;
 use std::run::ProcessOptions;
+use std::comm::Port;
 use extra::getopts;
+use std::io::signal::{Listener, Interrupt, Signum};
 
 struct Cmd {
     program : ~str,
@@ -70,6 +72,7 @@ impl CmdProcess {
         else { None }
     }
 
+    /*
     fn set_stdin(&mut self, stdin : Option<i32>) {
         self.stdin = stdin;
     }
@@ -77,6 +80,7 @@ impl CmdProcess {
     fn set_stdout(&mut self, stdout : Option<i32>) {
         self.stdout = stdout;
     }
+    */
 }
 impl Command for CmdProcess {
     fn run(&mut self) -> Option<Process> {
@@ -130,6 +134,7 @@ impl BackgroundProcess {
             Some(mut process) => {
                 let signal = killport.recv();
                 let mut error = None;
+                println("Background signal handler started");
                 match signal {
                 9 => { 
                     io_error::cond.trap(|e: IoError| {
@@ -161,6 +166,7 @@ struct Shell {
     cmd_prompt : ~str,
     history    : ~[~str],
     processes  : ~[~BackgroundProcess],
+    broken : bool,
 }
 
 impl Shell {
@@ -169,15 +175,31 @@ impl Shell {
             cmd_prompt: prompt_str.to_owned(),
             history: ~[],
             processes: ~[],
+            broken: false,
         }
     }
 
     fn run(&mut self) {
         let mut stdin = BufferedReader::new(stdin());
-        
+        let mut interrupt = Listener::new();
+        interrupt.register(Interrupt);
+        let (port, chan) : (Port<bool>, Chan<bool>) 
+                = Chan::new();
+        self.rupt(interrupt.port, chan);
         loop {
+            let port = &port;
             print(self.cmd_prompt);
             stdio::flush();
+
+            match port.try_recv() {
+            Some(val) => {
+                if val {
+                    println("Got dead signal");
+                    break;
+                }
+            }
+            None => {
+            }}
             
             let line = stdin.read_line().unwrap();
             let cmd_line = line.trim().to_owned();
@@ -209,6 +231,30 @@ impl Shell {
         }
     }
 
+    fn rupt(&mut self, port: Port<Signum>, chan : Chan<bool>) {
+        do spawn {
+            loop {
+                match port.recv_opt() {
+                    Some(recv) => {
+                        match recv {
+                        Interrupt => { 
+                            println("Got Interrupt'ed");
+                            match chan.try_send_deferred(true) {
+                            true => {
+                                break;
+                            }
+                            false => {
+                                continue;
+                            }}
+                        }
+                        _ => {
+                        }}
+                    }
+                    None => {
+                    }}
+            }
+        }
+    }
     fn kill_dead(&mut self) {
         let mut dead : ~[uint];
         dead = ~[];
@@ -301,19 +347,22 @@ impl Shell {
 
     fn parse_pipeline(&mut self, cmd_line : &str) -> Option<~run::Process> {
         let pair : ~[&str] = cmd_line.rsplitn('|', 1).collect();
-        if pair.len() > 1 {
-            match Cmd::new(pair[0].trim()) {
-            Some(cmd) => {
+        match Cmd::new(pair[0].trim()) {
+        Some(cmd) => {
+            if pair.len() > 1 {
                 let two = self.parse_pipeline(pair[1].trim());
                 self.pipe_input(cmd, two)
             }
-            None => {
-                None
-            }}
+            else {
+                match make_process(cmd, None, None) {
+                Some(process) => Some(~process),
+                None => None 
+                }
+            }
         }
-        else {
-            self.make_first_process(pair[0].trim())
-        }
+        None => {
+            None
+        }}
     }
 
     fn pipe_input(&mut self,
@@ -332,6 +381,7 @@ impl Shell {
                 Some(~process)
             }
             None => {
+                println("No two remain.");
                 Some(~process)
             }}
         }
@@ -339,24 +389,6 @@ impl Shell {
             None
         }}
     }
-
-    // For pipeline - first item. Returns Maybe Process.
-    fn make_first_process(&mut self, cmd_line : &str) -> Option<~run::Process>{
-        match Cmd::new(cmd_line) {
-        Some(cmd) => {
-            match make_process(cmd, None, None) {
-            Some(process) => {
-                Some(~process)
-            }
-            None => { 
-                None
-            }}
-        }
-        None => {
-            None
-        }}
-    }
-
 
     fn make_bg_process(&mut self, cmd : Cmd) {
         match BackgroundProcess::new(cmd) {
@@ -402,6 +434,7 @@ fn is_dead(exit_port : &Option<Port<ProcessExit>>) -> bool {
     let mut dead = false;
     match *exit_port {
     Some(ref p) => {
+        println("DEBUG: doing shutdown");
         match p.try_recv() {
         Some (exitstatus) => {
             dead = exitstatus.success();
@@ -502,7 +535,13 @@ fn main() {
     let opt_cmd_line = get_cmdline_from_args();
     
     match opt_cmd_line {
-        Some(cmd_line) => Shell::new("").run_cmdline(cmd_line),
-        None           => Shell::new("gash > ").run()
+        Some(cmd_line) => {
+            let mut shell = Shell::new("");
+            shell.run_cmdline(cmd_line);
+        }
+        None           => {
+            Shell::new("gash > ").run();
+        }
     }
+
 }

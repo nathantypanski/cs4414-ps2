@@ -436,7 +436,6 @@ impl Shell {
     }
 
     fn parse(&mut self, words: ~[~str]) -> ~LineElem {
-        println!("Words: {:?}", words);
         let mut slices : ~[~LineElem] = ~[];
         let mut in_file = false;
         let mut out_file = false;
@@ -478,63 +477,42 @@ impl Shell {
         slices[0]
     }
 
-    fn pipe(&mut self, elem: ~LineElem) -> Option<~Process> {
-        match elem.clone().pipe {
-            Some(pipe_elem) => {
-                let pipe_name = pipe_elem.clone().cmd;
-                match self.parse_process(elem.cmd, None, None) {
-                    Some(mut process) => {
-                        match self._run(pipe_elem) {
-                            Some(mut pipe) => {
-                                println!("DEBUG: Piping to {:s}", pipe_name);
-                                let output = process.finish_with_output();
-                                if output.status.success() {
-                                    println("DEBUG: success.");
-                                    pipe.input().write(output.output);
-                                }
-                                println!("DEBUG: sending {:s}", pipe_name);
-                                Some(pipe)
-                            }
-                            None => {
-                                println!("ERR: Broken pipeline on {:s}", pipe_name);
-                                None
-                            }
-                        }
+    fn pipe(&mut self, mut left: ~Process, mut right: ~Process) -> ~Process {
+        let output = left.finish_with_output();
+        if output.status.success() {
+            right.input().write(output.output);
+        }
+        right
+    }
+
+    fn file(&mut self, process: ~Process, file: Option<PathType>) -> Option<~Process> {
+        match file {
+            Some(file) => {
+                match file.mode {
+                    Read => {
+                        Some(input_redirect(process, &file.path))
                     }
-                    None => {
+                    Write => {
+                        output_redirect(process, &file.path);
                         None
                     }
                 }
             }
             None => {
-                println!("DEBUG: No pipes for {:s}", elem.cmd);
-                self.parse_process(elem.cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO))
+                Some(process)
             }
         }
     }
 
     fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
-        match elem.clone().file {
-            Some(file) => {
-                match file.mode {
-                    Read => {
-                        println("DEBUG: Redirecting input");
-                        match self.pipe(elem) {
-                            Some(process) => Some(input_redirect(process, &file.path)),
-                            None => None,
-                        }
-                    }
-                    Write => {
-                        println("DEBUG: Redirecting output");
-                        match self.pipe(elem) {
-                            Some(process) => Some(output_redirect(process, &file.path)),
-                            None => None,
-                        }
-                    }
-                }
+        match elem.clone().pipe {
+            Some(pipe_elem) => {
+                let mut process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+                let mut pipe = self._run(pipe_elem).expect("Broken pipe"); 
+                Some(self.pipe(process, pipe))
             }
             None => {
-                self.pipe(elem)
+                self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
             }
         }
     }
@@ -550,11 +528,7 @@ impl Shell {
         match(self._run(parse)) {
             Some(mut process) => {
                 println("DEBUG: reading output to stdout ...");
-                let output = process.finish_with_output();
-                if output.status.success() {
-                    println("DEBUG: success.");
-                    stdout.write(output.output);
-                }
+                process.finish();
             }
             None => {
                 println("DEBUG: No output.");

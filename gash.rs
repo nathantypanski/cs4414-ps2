@@ -47,7 +47,7 @@ impl Cmd {
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
             let argv : ~[~str] = argv;
-            Some(Cmd {
+            cmd_exists(Cmd {
                 program : program,
                 argv : argv,
             })
@@ -68,20 +68,17 @@ impl FgProcess {
     fn new(cmd : Cmd,
            stdin : Option<i32>,
            stdout : Option<i32>) 
-        -> Option<FgProcess> 
+        -> FgProcess
     {
-        if (cmd_exists(&cmd)) {
-            Some(FgProcess {
-                command     : cmd.program.to_owned(),
-                args        : cmd.argv.to_owned(),
-                stdin       : stdin,
-                stdout      : stdout,
-            })
+        FgProcess {
+            command     : cmd.program.to_owned(),
+            args        : cmd.argv.to_owned(),
+            stdin       : stdin,
+            stdout      : stdout,
         }
-        else { None }
     }
     
-    fn run(&mut self) -> Option<Process> {
+    fn run(&mut self) -> Process {
         let command = self.command.to_owned();
         let args = self.args.to_owned();
         let options = ProcessOptions {
@@ -91,7 +88,7 @@ impl FgProcess {
             out_fd : self.stdout,
             err_fd : None,
         };
-        Process::new(command, args, options)
+        Process::new(command, args, options).expect("Couldn't run!")
     }
 }
 
@@ -108,18 +105,15 @@ struct BgProcess {
     stdout      : Option<i32>,
 }
 impl BgProcess {
-    fn new(cmd : Cmd) -> Option<BgProcess> {
-        if (cmd_exists(&cmd)) {
-            Some(BgProcess {
-                command: cmd.program.to_owned(),
-                args: cmd.argv.to_owned(),
-                exit_port: None,
-                pid: None,
-                stdin: None,
-                stdout: None,
-            })
+    fn new(cmd : Cmd) -> BgProcess {
+        BgProcess {
+            command: cmd.program.to_owned(),
+            args: cmd.argv.to_owned(),
+            exit_port: None,
+            pid: None,
+            stdin: None,
+            stdout: None,
         }
-        else { None }
     }
 
     fn run(&mut self) -> Option<pid_t> {
@@ -343,37 +337,32 @@ impl Shell {
     }
 
     // Parse a new lone process. Background/foreground it appropriately.
-    fn parse_process(&mut self, cmd_line : &str) -> Option<Process>{
+    fn parse_process(&mut self, cmd_line : &str) -> Option<Process> {
         maybe(Cmd::new(cmd_line), |cmd| {
-            if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
-                let mut argv = cmd.argv.to_owned();
-                argv.pop();
-                self.make_bg_process(Cmd{
-                    program:cmd.program,
-                    argv:argv});
-                None
-            }
-            else {
-                make_process(cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO))
-            }
+                if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
+                    let mut argv = cmd.argv.to_owned();
+                    argv.pop();
+                    self.make_bg_process(Cmd{
+                        program:cmd.program,
+                        argv:argv});
+                    None
+                }
+                else {
+                    Some(make_process(cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO)))
+                }
         })
     }
 
     // background processes.
     fn make_bg_process(&mut self, cmd : Cmd) {
         let name = cmd.program.to_owned();
-        match BgProcess::new(cmd) {
-            Some(mut process) => {
-                match process.run() {
-                    Some(pid) => {
-                        println!("{:s} {:i}", name, pid);
-                        self.processes.push(~process);
-                    }
-                    None => {
-                    }
-                }
+        let mut process = BgProcess::new(cmd);
+        match process.run() {
+            Some(pid) => {
+                println!("{:s} {:i}", name, pid);
+                self.processes.push(~process);
             }
-            None => { 
+            None => {
             }
         }
     }
@@ -404,9 +393,14 @@ fn get_cmdline_from_args() -> Option<~str> {
 }
 
 // Determine whether a command exists using "which".
-fn cmd_exists(command : &Cmd) -> bool {
-    let ret = run::process_output("which", [command.program.to_owned()]);
-    return ret.expect("exit code error.").status.success();
+fn cmd_exists(cmd : Cmd) -> Option<Cmd> {
+    let ret = run::process_output("which", [cmd.program.to_owned()]);
+    if (ret.expect("exit code error.").status.success()) {
+        Some(cmd)
+    }
+    else {
+        None
+    }
 }
 
 fn split_words(word : &str) -> ~[~str] {
@@ -417,17 +411,16 @@ fn split_words(word : &str) -> ~[~str] {
 
 fn make_process(cmd : Cmd,
                 stdin: Option<i32>,
-                stdout: Option<i32>) -> Option<run::Process> {
-    maybe(FgProcess::new(cmd, stdin, stdout), 
-          |mut cmdprocess| cmdprocess.run())
+                stdout: Option<i32>) -> run::Process {
+    FgProcess::new(cmd, stdin, stdout).run()
 }
 
 fn parse_l_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('<').collect();
     let filename = pair[0].trim();
-    match maybe(Cmd::new(pair[1].trim()), |c| 
-                make_process(c, None, Some(STDOUT_FILENO))) {
-        Some(mut process) => {
+    match Cmd::new(pair[1].trim()) {
+        Some(cmd) => {
+            let mut process = make_process(cmd, None, Some(STDOUT_FILENO));
             match File::open_mode(&Path::new(filename),
                                     std::io::Append,
                                     std::io::ReadWrite) {
@@ -468,14 +461,12 @@ fn write_output_to_file(output : std::run::ProcessOutput,
 fn parse_r_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('>').collect();
     let file = pair[0].trim();
-    let cmd = Cmd::new(pair[1].trim());
-    match maybe(cmd, |c| make_process(c, None, None)) {
-        Some(mut process) => {
-            write_output_to_file(
-                process.finish_with_output(),
-                file);
+    match Cmd::new(pair[1].trim()) {
+        Some(cmd) => {
+            let mut process = make_process(cmd, None, None);
+            write_output_to_file(process.finish_with_output(), file);
         }
-        None => { 
+        None => {
         }
     }
 }

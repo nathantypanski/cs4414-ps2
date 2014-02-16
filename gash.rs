@@ -27,10 +27,11 @@ use std::comm::Port;
 use extra::getopts;
 
 use std::libc::types::os::arch::posix88::pid_t;
+use std::libc::consts::os::posix88::{STDOUT_FILENO, STDIN_FILENO};
 use std::libc;
 
 extern {
-  pub fn kill(pid: libc::pid_t, sig: libc::c_int) -> libc::c_int;
+  pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;
 }
 
 // The basic unit for a command that could be run.
@@ -355,52 +356,33 @@ impl Shell {
                 None
             }
             else {
-                make_process(cmd, Some(0), Some(1))
+                make_process(cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO))
             }
         })
     }
 
     // Parse a process pipeline, and redirect stdin/stdout appropriately.
-    fn parse_pipeline(&mut self, cmd_line : &str) -> Option<~run::Process> {
-        let pair : ~[&str] = cmd_line.rsplitn('|', 1).collect();
-        maybe(Cmd::new(pair[0].trim()), |cmd| {
-            if pair.len() > 1 {
-                let two = self.parse_pipeline(pair[1].trim());
-                self.pipe_input(cmd, two)
-            }
-            else {
-                maybe(make_process(cmd, None, None), |process| Some(~process))
-            }
-        })
+    fn parse_pipeline(&mut self, cmd_line : &str) {
+        let mut pipes : ~[Process] = cmd_line.split('|')
+            .filter_map(Cmd::new)
+            .filter_map(|c| make_process(c, None, None))
+            .to_owned_vec();
+        let i = 0;
+        let mut p : Process = pipes.pop();
+        for mut pipe in pipes.move_iter() {
+            self.pipe_input(&mut pipe, &mut p);
+        }
     }
 
     // Redirect the stdout of Process two into the stdin of `cmd`, and return
     // the process created from `cmd`.
-    fn pipe_input(&mut self,
-                  cmd : Cmd,
-                  two : Option<~run::Process>) -> Option<~run::Process> {
-        match make_process(cmd, None, Some(1)) {
-            Some(mut process) => {
-                match two {
-                    Some(mut p2) => {
-                        let output = p2.finish_with_output();
-                        if output.status.success() {
-                            process.input().write(output.output);
-                            process.close_input();
-                            process.finish();
-                        }
-                        Some(~process)
-                    }
-                    None => {
-                        println("No two remain.");
-                        Some(~process)
-                    }
-                }
-            }
-            None => { 
-                None
-            }
+    fn pipe_input(&mut self, left : &mut Process, right : &mut Process) -> Process {
+        let output = left.finish_with_output();
+        if output.status.success() {
+            right.input().write(output.output);
+            right.close_input();
         }
+        right
     }
 
     // Make a new background process, and push it onto our stack of tracked
@@ -470,7 +452,8 @@ fn make_process(cmd : Cmd,
 fn parse_l_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('<').collect();
     let filename = pair[0].trim();
-    match maybe(Cmd::new(pair[1].trim()), |c| make_process(c, None, Some(1))) {
+    match maybe(Cmd::new(pair[1].trim()), |c| 
+                make_process(c, None, Some(STDOUT_FILENO))) {
         Some(mut process) => {
             match File::open_mode(&Path::new(filename),
                                     std::io::Append,

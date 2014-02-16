@@ -495,54 +495,63 @@ impl Shell {
         slices[0]
     }
 
-    fn pipe(&mut self, mut process: ~Process, pipe_elem : ~LineElem) -> Option<~Process> {
-        let pipe_name = pipe_elem.clone().cmd;
-        match self._run(pipe_elem) {
-            Some(mut pipe) => {
-                println!("DEBUG: Piping to {:s}", pipe_name);
-                pipe.input().write(process.output().read_to_end());
-                Some(pipe)
-            }
-            None => {
-                println!("ERR: Broken pipeline on {:s}", pipe_name);
-                None
-            }
-        }
-    }
-
-    fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
-        match self.parse_process(elem.cmd, None, None) {
-            Some(process) => {
-                match elem.file {
-                    Some(file) => {
-                        match file.mode {
-                            Read => {
-                                println("DEBUG: Redirecting input");
-                                Some(input_redirect(process, &file.path))
+    fn pipe(&mut self, elem: ~LineElem) -> Option<~Process> {
+        match elem.clone().pipe {
+            Some(pipe_elem) => {
+                let pipe_name = pipe_elem.clone().cmd;
+                match self.parse_process(elem.cmd, None, None) {
+                    Some(mut process) => {
+                        match self._run(pipe_elem) {
+                            Some(mut pipe) => {
+                                println!("DEBUG: Piping to {:s}", pipe_name);
+                                let output = process.finish_with_output();
+                                if output.status.success() {
+                                    println("DEBUG: success.");
+                                    pipe.input().write(output.output);
+                                }
+                                println!("DEBUG: sending {:s}", pipe_name);
+                                Some(pipe)
                             }
-                            Write => {
-                                output_redirect(process, &file.path);
-                                println("DEBUG: Redirecting output");
+                            None => {
+                                println!("ERR: Broken pipeline on {:s}", pipe_name);
                                 None
                             }
                         }
                     }
                     None => {
-                        match elem.pipe {
-                            Some(pipe_elem) => {
-                                self.pipe(process, pipe_elem)
-                            }
-                            None => {
-                                println!("DEBUG: No pipes for {:s}", elem.cmd);
-                                Some(process)
-                            }
+                        None
+                    }
+                }
+            }
+            None => {
+                println!("DEBUG: No pipes for {:s}", elem.cmd);
+                self.parse_process(elem.cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO))
+            }
+        }
+    }
+
+    fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
+        match elem.clone().file {
+            Some(file) => {
+                match file.mode {
+                    Read => {
+                        println("DEBUG: Redirecting input");
+                        match self.pipe(elem) {
+                            Some(process) => Some(input_redirect(process, &file.path)),
+                            None => None,
+                        }
+                    }
+                    Write => {
+                        println("DEBUG: Redirecting output");
+                        match self.pipe(elem) {
+                            Some(process) => Some(output_redirect(process, &file.path)),
+                            None => None,
                         }
                     }
                 }
             }
             None => {
-                println!("{:s} is not a command!", elem.cmd);
-                None
+                self.pipe(elem)
             }
         }
     }

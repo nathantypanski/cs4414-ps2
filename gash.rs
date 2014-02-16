@@ -285,7 +285,6 @@ impl Shell {
     fn display_prompt(&mut self) {
         // Standard input reader
         let mut stdin = BufferedReader::new(stdin());
-        let mut stdout = BufferedWriter::new(stdout());
         // Show the prompt
         print(self.cmd_prompt);
         stdio::flush();
@@ -323,23 +322,7 @@ impl Shell {
                 self.display_prompt();
             }
             _ => { 
-                let lex = self.lex(cmd_line);
-                println!("{:?}", lex);
-                let parse = self.parse(lex);
-                println!("{:?}", parse);
-                match(self._run(parse)) {
-                    Some(mut process) => {
-                        println("DEBUG: reading output to stdout ...");
-                        let output = process.finish_with_output();
-                        if output.status.success() {
-                            println("DEBUG: success.");
-                            stdout.write(output.output);
-                        }
-                    }
-                    None => {
-                        println("DEBUG: No output.");
-                    }
-                }
+                self.run_cmdline(cmd_line);
                 self.display_prompt();
             }
         }
@@ -559,14 +542,23 @@ impl Shell {
     // Determine the type of the current block, and send it to the right
     // parsing function.
     fn run_cmdline(&mut self, cmd_line: &str) {
-        if cmd_line.contains_char('>') {
-            parse_r_redirect(cmd_line);
-        }
-        else if cmd_line.contains_char('<') {
-            parse_l_redirect(cmd_line);
-        }
-        else {
-            self.parse_process(cmd_line, Some(STDIN_FILENO), Some(STDOUT_FILENO));
+        let mut stdout = BufferedWriter::new(stdout());
+        let lex = self.lex(cmd_line);
+        println!("{:?}", lex);
+        let parse = self.parse(lex);
+        println!("{:?}", parse);
+        match(self._run(parse)) {
+            Some(mut process) => {
+                println("DEBUG: reading output to stdout ...");
+                let output = process.finish_with_output();
+                if output.status.success() {
+                    println("DEBUG: success.");
+                    stdout.write(output.output);
+                }
+            }
+            None => {
+                println("DEBUG: No output.");
+            }
         }
     }
 
@@ -586,7 +578,7 @@ impl Shell {
                     None
                 }
                 else {
-                    Some(~make_process(cmd, stdin, stdout))
+                    Some(~FgProcess::new(cmd, stdin, stdout).run())
                 }
         })
     }
@@ -647,12 +639,6 @@ fn split_words(word : &str) -> ~[~str] {
         ).to_owned_vec()
 }
 
-fn make_process(cmd : Cmd,
-                stdin: Option<i32>,
-                stdout: Option<i32>) -> run::Process {
-    FgProcess::new(cmd, stdin, stdout).run()
-}
-
 fn input_redirect(mut process: ~Process, path: &Path) -> ~Process {
     let file = File::open_mode(path,
                             std::io::Open,
@@ -665,19 +651,6 @@ fn input_redirect(mut process: ~Process, path: &Path) -> ~Process {
 
 fn write_buffer(input : &mut Reader, output: &mut Writer) {
     output.write(input.read_to_end());
-}
-
-fn parse_l_redirect(cmd_line : &str) {
-    let pair : ~[&str] = cmd_line.rsplit('<').collect();
-    let filename = pair[0].trim();
-    match Cmd::new(pair[1].trim()) {
-        Some(cmd) => {
-            let process = make_process(cmd, None, Some(STDOUT_FILENO));
-            input_redirect(~process, &Path::new(filename));
-        }
-        None => { 
-        }
-    }
 }
 
 fn write_output_to_file(output : ~[u8],
@@ -695,22 +668,6 @@ fn output_redirect(mut process : ~Process, path : &Path) -> ~Process {
         write_output_to_file(output.output, path);
     }
     process
-}
-
-fn parse_r_redirect(cmd_line : &str) {
-    let pair : ~[&str] = cmd_line.rsplit('>').collect();
-    let file = pair[0].trim();
-    match Cmd::new(pair[1].trim()) {
-        Some(cmd) => {
-            let mut process = make_process(cmd, None, None);
-            let output = process.finish_with_output();
-            if output.status.success() {
-                write_output_to_file(output.output, &Path::new(file));
-            }
-        }
-        None => {
-        }
-    }
 }
 
 // Describes a computation that could fail.

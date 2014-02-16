@@ -425,19 +425,15 @@ impl Shell {
         let mut out_file = false;
         let mut pipe = false;
         for i in range(0, words.len()) {
-            println("Looping");
             if words[i].len() == 1 
                     && self.breakchars.contains(&words[i].char_at(0)) {
                 if words[i] == ~">" {
-                    println("> ...");
                     out_file = true;
                 }
                 if words[i] == ~"<" {
-                    println("< ...");
                     in_file = true;
                 }
                 if words[i] == ~"|" {
-                    println("| ...");
                     pipe = true;
                 }
             }

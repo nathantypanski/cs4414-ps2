@@ -35,6 +35,7 @@ extern {
 }
 
 // The basic unit for a command that could be run.
+#[deriving(Clone)]
 struct Cmd {
     program : ~str,
     argv : ~[~str],
@@ -363,26 +364,47 @@ impl Shell {
 
     // Parse a process pipeline, and redirect stdin/stdout appropriately.
     fn parse_pipeline(&mut self, cmd_line : &str) {
-        let mut pipes : ~[Process] = cmd_line.split('|')
+        let pipes : ~[Cmd] = cmd_line.split('|')
             .filter_map(Cmd::new)
-            .filter_map(|c| make_process(c, None, None))
             .to_owned_vec();
-        let i = 0;
-        let mut p : Process = pipes.pop();
-        for mut pipe in pipes.move_iter() {
-            self.pipe_input(&mut pipe, &mut p);
+        let mut i = 0;
+        let mut stdout = stdio::stdout();
+        let x = pipes[0].clone();
+        let y = pipes[1].clone();
+        match self.pipe_input(x, y) {
+            Some(mut p) => {
+                let output = p.finish_with_output();
+                stdout.write(output.output);
+            }
+            None => {
+
+            }
         }
     }
 
     // Redirect the stdout of Process two into the stdin of `cmd`, and return
     // the process created from `cmd`.
-    fn pipe_input(&mut self, left : &mut Process, right : &mut Process) -> Process {
-        let output = left.finish_with_output();
-        if output.status.success() {
-            right.input().write(output.output);
-            right.close_input();
+    fn pipe_input(&mut self, left : Cmd, right : Cmd) -> Option<Process> {
+        match simple_process(left) {
+            Some(mut left) => {
+                match simple_process(right) {
+                    Some(mut right) => {
+                        let output = left.finish_with_output();
+                        if output.status.success() {
+                            right.input().write(output.output);
+                            right.close_input();
+                        }
+                        Some(right)
+                    }
+                    None => {
+                        None
+                    }
+                }
+            }
+            None => {
+                None
+            }
         }
-        right
     }
 
     // Make a new background process, and push it onto our stack of tracked
@@ -440,6 +462,11 @@ fn split_words(word : &str) -> ~[~str] {
     word.split(' ').filter_map(
         |x| if x != "" { Some(x.to_owned()) } else { None }
         ).to_owned_vec()
+}
+
+fn simple_process(cmd : Cmd) -> Option<run::Process> {
+    maybe(FgProcess::new(cmd, None, None), 
+          |mut cmdprocess| cmdprocess.run())
 }
 
 fn make_process(cmd : Cmd,

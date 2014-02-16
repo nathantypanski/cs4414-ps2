@@ -34,6 +34,16 @@ extern {
   pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;
 }
 
+enum LineType {
+    File,
+    Command,
+}
+
+struct LineElem {
+    text: ~str,
+    linetype: LineType,
+}
+
 // The basic unit for a command that could be run.
 #[deriving(Clone)]
 struct Cmd {
@@ -235,6 +245,7 @@ impl Shell {
                 self.display_prompt();
             }
             _ => { 
+                println!("{:?}", self.lex(cmd_line));
                 self.run_cmdline(cmd_line);
                 self.display_prompt();
             }
@@ -320,6 +331,38 @@ impl Shell {
             let path = Path::new(argv[0]);
             os::change_dir(&path);
         }
+    }
+
+    fn lex(&mut self, cmd_line: &str) -> ~[~str] {
+        let words = split_words(cmd_line);
+        let mut slices : ~[~str] = ~[];
+        let breakchars = ['>', '<', '|'];
+        for word in words.iter() {
+            let mut last = 0;
+            let mut current = 0;
+            for c in word.chars() {
+                if breakchars.contains(&c) && current != 0 {
+                    slices.push(word.slice(last, current).to_owned());
+                    last = current;
+                }
+                current += 1;
+            }
+            slices.push(word.slice_from(last).to_owned());
+        }
+        slices
+    }
+
+    fn parse(&mut self, words: ~[~str]) -> ~[LineElem] {
+        let mut slices : ~[LineElem] = ~[];
+        let keywords = ['>', '<', '|'];
+        let mut last = 0;
+        let mut current = 0;
+        for word in words.iter() {
+            if word.len() == 0 && keywords.contains(&word.char_at(current)) {
+            }
+            current += 1;
+        }
+        ~[]
     }
    
     // Determine the type of the current block, and send it to the right
@@ -421,41 +464,26 @@ fn parse_l_redirect(cmd_line : &str) {
     match Cmd::new(pair[1].trim()) {
         Some(cmd) => {
             let mut process = make_process(cmd, None, Some(STDOUT_FILENO));
-            match File::open_mode(&Path::new(filename),
+            let file = File::open_mode(&Path::new(filename),
                                     std::io::Append,
-                                    std::io::ReadWrite) {
-                Some(file) => {
-                    let proc_input = process.input();
-                    let mut file_buffer = BufferedReader::new(file);
-                    proc_input.write(file_buffer.read_to_end());
-                }
-                None => {
-                }
-            }
+                                    std::io::Read)
+                .expect(format!("Couldn't open {:s}!", filename));
+            let proc_input = process.input();
+            let mut file_buffer = BufferedReader::new(file);
+            proc_input.write(file_buffer.read_to_end());
         }
         None => { 
         }
     }
 }
 
-fn write_output_to_file(output : std::run::ProcessOutput,
+fn write_output_to_file(output : ~[u8],
                         filename : &str) {
-    if output.status.success() {
-        match File::open_mode(&Path::new(filename),
-                                std::io::Truncate, 
-                                std::io::Write) 
-        {
-            Some(mut file) => {
-                file.write(output.output);
-            }
-            None =>{
-                println!("Opening {:s} failed!", filename);
-            }
-        }
-    }
-    else {
-        println!("{:?}", output.error);
-    }
+    let mut file = File::open_mode(&Path::new(filename),
+                                    std::io::Truncate, 
+                                    std::io::Write)
+    .expect(format!("Opening {:s} failed!", filename));
+    file.write(output);
 }
 
 fn parse_r_redirect(cmd_line : &str) {
@@ -464,7 +492,10 @@ fn parse_r_redirect(cmd_line : &str) {
     match Cmd::new(pair[1].trim()) {
         Some(cmd) => {
             let mut process = make_process(cmd, None, None);
-            write_output_to_file(process.finish_with_output(), file);
+            let output = process.finish_with_output();
+            if output.status.success() {
+                write_output_to_file(output.output, file);
+            }
         }
         None => {
         }

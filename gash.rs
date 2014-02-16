@@ -404,17 +404,14 @@ impl Shell {
 
     fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
         if elem.last && elem.file.is_none() {
-            println("DEBUG: Last elem");
             self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
         }
         else {
             match elem.clone().pipe {
                 Some(pipe_elem) => {
-                    println("DEBUG: Created left");
                     let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
 
                     let right = self._run(pipe_elem).expect("Broken pipe"); 
-                    println("DEBUG: Created right");
                     Some(pipe_redirect(left, right))
                 }
                 None => {
@@ -424,13 +421,11 @@ impl Shell {
                                 Read => {
                                     let mut process : ~Process;
                                     if elem.last {
-                                        println("DEBUG: Outputting to STDOUT");
                                         process = self.parse_process(elem.cmd, None, Some(STDOUT_FILENO)).expect("Couldn't spawn!");
                                     } 
                                     else {
                                         process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
                                     }
-                                    println("DEBUG: Redirecting input");
                                     Some(input_redirect(process, &file.path))
                                 }
                                 Write => {
@@ -442,7 +437,6 @@ impl Shell {
                         }
                         None => {
                             if elem.last {
-                                println("DEBUG: Outputting to STDOUT");
                                 self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
                             } 
                             else {
@@ -461,7 +455,6 @@ impl Shell {
     fn run_cmdline(&mut self, cmd_line: &str) {
         let lex = self.lex(cmd_line);
         let parse = self.parse(lex);
-        println!("DEBUG: {:?}", parse);
         self._run(parse);
     }
 

@@ -403,7 +403,7 @@ impl Shell {
     }
 
     fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
-        if elem.last {
+        if elem.last && elem.file.is_none() {
             println("DEBUG: Last elem");
             self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
         }
@@ -412,16 +412,49 @@ impl Shell {
                 Some(pipe_elem) => {
                     println("DEBUG: Created left");
                     let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-                    println("DEBUG: Created right");
+
                     let right = self._run(pipe_elem).expect("Broken pipe"); 
+                    println("DEBUG: Created right");
                     Some(pipe_redirect(left, right))
                 }
                 None => {
-                    self.parse_process(elem.cmd, None, None)
+                    match elem.clone().file {
+                        Some(file) => {
+                            match file.mode {
+                                Read => {
+                                    let mut process : ~Process;
+                                    if elem.last {
+                                        println("DEBUG: Outputting to STDOUT");
+                                        process = self.parse_process(elem.cmd, None, Some(STDOUT_FILENO)).expect("Couldn't spawn!");
+                                    } 
+                                    else {
+                                        process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+                                    }
+                                    println("DEBUG: Redirecting input");
+                                    Some(input_redirect(process, &file.path))
+                                }
+                                Write => {
+                                    let process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+                                    output_redirect(process, &file.path);
+                                    None
+                                }
+                            }
+                        }
+                        None => {
+                            if elem.last {
+                                println("DEBUG: Outputting to STDOUT");
+                                self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
+                            } 
+                            else {
+                                self.parse_process(elem.cmd, None, None)
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+
    
     // Determine the type of the current block, and send it to the right
     // parsing function.
@@ -430,17 +463,6 @@ impl Shell {
         let parse = self.parse(lex);
         println!("DEBUG: {:?}", parse);
         self._run(parse);
-        /*
-        match(self._run(parse)) {
-            Some(mut process) => {
-                println("DEBUG: reading output to stdout ...");
-                process.finish();
-            }
-            None => {
-                println("DEBUG: No output.");
-            }
-        }
-        */
     }
 
     // Parse a new lone process. Background/foreground it appropriately.
@@ -638,25 +660,6 @@ fn pipe_redirect(mut left: ~Process, mut right: ~Process) -> ~Process {
         right.input().write(output.output);
     }
     right
-}
-
-fn file(process: ~Process, file: Option<PathType>) -> Option<~Process> {
-    match file {
-        Some(file) => {
-            match file.mode {
-                Read => {
-                    Some(input_redirect(process, &file.path))
-                }
-                Write => {
-                    output_redirect(process, &file.path);
-                    None
-                }
-            }
-        }
-        None => {
-            Some(process)
-        }
-    }
 }
 
 

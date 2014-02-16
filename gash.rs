@@ -137,7 +137,7 @@ impl Cmd {
         let mut argv: ~[~str] = split_words(cmd_name);
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
-            let argv : ~[~str] = argv;
+            println!("DEBUG:\n\tprogram: {:s}\nargv: {:?}", program, argv);
             cmd_exists(Cmd {
                 program : program,
                 argv : argv,
@@ -357,6 +357,7 @@ impl Shell {
         else {
             slices.push(cmd_line.slice_from(last+1).trim().to_owned());
         }
+        println!("DEBUG: {:?}", slices);
         slices
     }
 
@@ -399,6 +400,7 @@ impl Shell {
                 }
             }
         }
+        println!("DEBUG: {:?}", slices[0]);
         slices[0]
     }
 
@@ -614,10 +616,45 @@ fn cmd_exists(cmd : Cmd) -> Option<Cmd> {
     }
 }
 
-fn split_words(word : &str) -> ~[~str] {
-    word.split(' ').filter_map(
-        |x| if x != "" { Some(x.to_owned()) } else { None }
-        ).to_owned_vec()
+fn split_words(words : &str) -> ~[~str] {
+    let mut splits = ~[];
+    let mut lastword = 0;
+    let mut quoted = false;
+    for i in range(0, words.len()) {
+        if !quoted {
+            if i == 0 {
+                if words.char_at(i) == '"' {
+                    quoted = true;
+                    lastword = i+1;
+                }
+            }
+            else {
+                if words.char_at(i) == '"' && words.char_at(i-1) != '\\' {
+                    quoted = true;
+                    lastword = i+1;
+                }
+                else if words.char_at(i) == ' ' && words.char_at(i-1) != '\\' {
+                    let word = words.slice(lastword, i).to_owned();
+                    if word != ~"" {
+                        splits.push(word);
+                    }
+                    lastword = i+1;
+                }
+            }
+        }
+        else {
+            if words.char_at(i) == '"' {
+                splits.push(words.slice(lastword, i).to_owned());
+                lastword = i+1;
+                quoted = false;
+            }
+        }
+    }
+    if lastword != words.len() {
+        splits.push(words.slice_from(lastword).to_owned());
+    }
+    println!("DEBUG: split_words: {:?}", splits);
+    splits
 }
 
 fn input_redirect(mut process: ~Process, path: &Path) -> ~Process {
@@ -637,7 +674,7 @@ fn write_buffer(input : &mut Reader, output: &mut Writer) {
 fn write_output_to_file(output : ~[u8],
                         path : &Path) {
     let mut file = File::open_mode(path,
-                                    std::io::Truncate, 
+                                    std::io::Truncate,  
                                     std::io::Write)
     .expect(format!("Failed to open a file for output!"));
     file.write(output);

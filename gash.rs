@@ -79,10 +79,22 @@ impl LineElem {
     }
 
     fn set_path(&self, path: PathType) -> ~LineElem {
-        ~LineElem {
-            cmd: self.cmd.to_owned(),
-            pipe: self.pipe.clone(),
-            file: ~Some(path),
+        let this_pipe = self.pipe.clone();
+        match this_pipe {
+            Some(elem) => {
+                ~LineElem {
+                    cmd: self.cmd.to_owned(), 
+                    pipe: Some(elem.set_path(path)),
+                    file: self.file.clone(),
+                }
+            }
+            None => {
+                ~LineElem {
+                    cmd: self.cmd.to_owned(), 
+                    pipe: self.pipe.clone(),
+                    file: ~Some(path),
+                }
+            }
         }
     }
 

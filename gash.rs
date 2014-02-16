@@ -454,11 +454,11 @@ impl Shell {
                 }
                 else if pipe {
                     let cmd = slices.pop();
-                    slices.push(cmd.set_pipe(LineElem::new_simple(words[i].to_owned())));
+                    slices.push(cmd.set_pipe(LineElem::new(words[i].to_owned())));
                     pipe = false;
                 }
                 else {
-                    slices.push(LineElem::new_simple(words[i].to_owned()));
+                    slices.push(LineElem::new(words[i].to_owned()));
                 }
             }
         }

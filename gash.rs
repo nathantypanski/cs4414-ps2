@@ -67,14 +67,14 @@ enum FilePermission {
 struct LineElem {
     cmd: ~str,
     pipe: Option<~LineElem>,
-    file: ~Option<PathType>,
+    file: Option<PathType>,
 }
 impl LineElem {
     fn new(cmd: ~str) -> ~LineElem {
         ~LineElem {
             cmd: cmd.to_owned(),
             pipe: None,
-            file: ~None,
+            file: None,
         }
     }
 
@@ -92,7 +92,7 @@ impl LineElem {
                 ~LineElem {
                     cmd: self.cmd.to_owned(), 
                     pipe: self.pipe.clone(),
-                    file: ~Some(path),
+                    file: Some(path),
                 }
             }
         }
@@ -326,7 +326,7 @@ impl Shell {
                 println!("{:?}", lex);
                 let parse = self.parse(lex);
                 println!("{:?}", parse);
-                self.run_cmdline(cmd_line);
+                //self.run_cmdline(cmd_line);
                 self.display_prompt();
             }
         }
@@ -414,24 +414,28 @@ impl Shell {
     }
 
     fn lex(&mut self, cmd_line: &str) -> ~[~str] {
-        let words = split_words(cmd_line);
         let mut slices : ~[~str] = ~[];
-        for word in words.iter() {
-            let mut last = 0;
-            let mut current = 0;
-            for c in word.chars() {
-                if self.breakchars.contains(&c) && current != 0 {
-                    slices.push(word.slice(last, current).to_owned());
-                    last = current;
+        let mut last = 0;
+        let mut current = 0;
+        for i in range(0, cmd_line.len()) {
+            if self.breakchars.contains(&cmd_line.char_at(i)) && i != 0 {
+                if last != 0 {
+                    slices.push(cmd_line.slice(last+1, current).trim().to_owned());
                 }
-                current += 1;
+                else {
+                    slices.push(cmd_line.slice_to(current).trim().to_owned());
+                }
+                slices.push(cmd_line.slice(i, i+1).to_owned());
+                last = i;
             }
-            slices.push(word.slice_from(last).to_owned());
+            current += 1;
         }
+        slices.push(cmd_line.slice_from(last+1).trim().to_owned());
         slices
     }
 
-    fn parse(&mut self, words: ~[~str]) -> ~[~LineElem] {
+    fn parse(&mut self, words: ~[~str]) -> ~LineElem {
+        println!("Words: {:?}", words);
         let mut slices : ~[~LineElem] = ~[];
         let mut in_file = false;
         let mut out_file = false;
@@ -470,7 +474,17 @@ impl Shell {
                 }
             }
         }
-        slices
+        slices[0]
+    }
+
+    fn _run(&mut self, elem : ~LineElem) {
+        match elem.file {
+            Some(file) => {
+            }
+            None => {
+
+            }
+        }
     }
    
     // Determine the type of the current block, and send it to the right

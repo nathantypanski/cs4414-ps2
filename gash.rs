@@ -124,6 +124,11 @@ impl LineElem {
         }
     }
 }
+impl Iterator<~LineElem> for LineElem {
+    fn next(&mut self) -> Option<~LineElem> {
+        self.pipe.clone()
+    }
+}
 
 // The basic unit for a command that could be run.
 #[deriving(Clone)]
@@ -409,6 +414,9 @@ impl Shell {
             self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
         }
         else {
+            if elem.pipe.is_some() {
+
+            }
             match elem.clone().pipe {
                 Some(pipe_elem) => {
                     println!("Piping {:s} | {:s}", elem.cmd, pipe_elem.cmd);

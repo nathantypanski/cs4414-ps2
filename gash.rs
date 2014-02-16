@@ -34,14 +34,77 @@ extern {
   pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;
 }
 
-enum LineType {
-    File,
-    Command,
+struct PathType {
+    path: Path,
+    mode: FilePermission,
 }
 
+impl PathType{
+    fn new(path: ~str, mode: FilePermission) -> PathType{
+        let path = Path::new(path);
+        PathType{
+            path: path,
+            mode: mode,
+        }
+    }
+}
+
+impl Clone for PathType {
+    fn clone(&self) -> PathType {
+        PathType{
+            path: self.path.clone(),
+            mode: self.mode,
+        }
+    }
+}
+
+enum FilePermission {
+    Read,
+    Write,
+}
+
+#[deriving(Clone)]
 struct LineElem {
-    text: ~str,
-    linetype: LineType,
+    cmd: ~str,
+    pipe: Option<~LineElem>,
+    file: ~Option<PathType>,
+}
+impl LineElem {
+    fn new(cmd: ~str) -> ~LineElem {
+        ~LineElem {
+            cmd: cmd.to_owned(),
+            pipe: None,
+            file: ~None,
+        }
+    }
+
+    fn set_path(&self, path: PathType) -> ~LineElem {
+        ~LineElem {
+            cmd: self.cmd.to_owned(),
+            pipe: self.pipe.clone(),
+            file: ~Some(path),
+        }
+    }
+
+    fn set_pipe(&self, pipe: ~LineElem) -> ~LineElem {
+        let this_pipe = self.pipe.clone();
+        match this_pipe {
+            Some(elem) => {
+                ~LineElem {
+                    cmd: self.cmd.to_owned(), 
+                    pipe: Some(elem.set_pipe(pipe)),
+                    file: self.file.clone()
+                }
+            }
+            None => {
+                ~LineElem {
+                    cmd: self.cmd.to_owned(), 
+                    pipe: Some(pipe), 
+                    file: self.file.clone()
+                }
+            }
+        }
+    }
 }
 
 // The basic unit for a command that could be run.
@@ -165,6 +228,7 @@ struct Shell {
     cmd_prompt : ~str,
     history    : ~[~str],
     processes  : ~[~BgProcess],
+    breakchars : ~[char],
     broken : bool,
 }
 
@@ -174,6 +238,7 @@ impl Shell {
             cmd_prompt: prompt_str.to_owned(),
             history: ~[],
             processes: ~[],
+            breakchars: ~['>', '<', '|'],
             broken: false,
         }
     }
@@ -245,7 +310,10 @@ impl Shell {
                 self.display_prompt();
             }
             _ => { 
-                println!("{:?}", self.lex(cmd_line));
+                let lex = self.lex(cmd_line);
+                println!("{:?}", lex);
+                let parse = self.parse(lex);
+                println!("{:?}", parse);
                 self.run_cmdline(cmd_line);
                 self.display_prompt();
             }
@@ -336,12 +404,11 @@ impl Shell {
     fn lex(&mut self, cmd_line: &str) -> ~[~str] {
         let words = split_words(cmd_line);
         let mut slices : ~[~str] = ~[];
-        let breakchars = ['>', '<', '|'];
         for word in words.iter() {
             let mut last = 0;
             let mut current = 0;
             for c in word.chars() {
-                if breakchars.contains(&c) && current != 0 {
+                if self.breakchars.contains(&c) && current != 0 {
                     slices.push(word.slice(last, current).to_owned());
                     last = current;
                 }
@@ -352,17 +419,50 @@ impl Shell {
         slices
     }
 
-    fn parse(&mut self, words: ~[~str]) -> ~[LineElem] {
-        let mut slices : ~[LineElem] = ~[];
-        let keywords = ['>', '<', '|'];
-        let mut last = 0;
-        let mut current = 0;
-        for word in words.iter() {
-            if word.len() == 0 && keywords.contains(&word.char_at(current)) {
+    fn parse(&mut self, words: ~[~str]) -> ~[~LineElem] {
+        let mut slices : ~[~LineElem] = ~[];
+        let mut in_file = false;
+        let mut out_file = false;
+        let mut pipe = false;
+        for i in range(0, words.len()) {
+            println("Looping");
+            if words[i].len() == 1 
+                    && self.breakchars.contains(&words[i].char_at(0)) {
+                if words[i] == ~">" {
+                    println("> ...");
+                    out_file = true;
+                }
+                if words[i] == ~"<" {
+                    println("< ...");
+                    in_file = true;
+                }
+                if words[i] == ~"|" {
+                    println("| ...");
+                    pipe = true;
+                }
             }
-            current += 1;
+            else {
+                if out_file {
+                    let cmd = slices.pop();
+                    slices.push(cmd.set_path(PathType::new(words[i].to_owned(), Write)));
+                    out_file = false;
+                }
+                else if in_file {
+                    let cmd = slices.pop();
+                    slices.push(cmd.set_path(PathType::new(words[i].to_owned(), Read)));
+                    in_file = false;
+                }
+                else if pipe {
+                    let cmd = slices.pop();
+                    slices.push(cmd.set_pipe(LineElem::new_simple(words[i].to_owned())));
+                    pipe = false;
+                }
+                else {
+                    slices.push(LineElem::new_simple(words[i].to_owned()));
+                }
+            }
         }
-        ~[]
+        slices
     }
    
     // Determine the type of the current block, and send it to the right
@@ -465,7 +565,7 @@ fn parse_l_redirect(cmd_line : &str) {
         Some(cmd) => {
             let mut process = make_process(cmd, None, Some(STDOUT_FILENO));
             let file = File::open_mode(&Path::new(filename),
-                                    std::io::Append,
+                                    std::io::Open,
                                     std::io::Read)
                 .expect(format!("Couldn't open {:s}!", filename));
             let proc_input = process.input();

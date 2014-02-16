@@ -14,7 +14,7 @@ extern mod extra;
 
 use std::{run, os};
 use std::io::buffered::BufferedReader;
-use std::io::{stdin, stdio, File, Truncate, Write};
+use std::io::{stdin, stdio, File, Truncate};
 use std::io::process::ProcessExit;
 use std::io::signal::{Listener, Interrupt};
 use std::path::posix::Path;
@@ -326,7 +326,7 @@ impl Shell {
                 println!("{:?}", lex);
                 let parse = self.parse(lex);
                 println!("{:?}", parse);
-                //self.run_cmdline(cmd_line);
+                self._run(parse);
                 self.display_prompt();
             }
         }
@@ -430,7 +430,12 @@ impl Shell {
             }
             current += 1;
         }
-        slices.push(cmd_line.slice_from(last+1).trim().to_owned());
+        if last == 0 {
+            slices.push(cmd_line.trim().to_owned());
+        }
+        else {
+            slices.push(cmd_line.slice_from(last+1).trim().to_owned());
+        }
         slices
     }
 
@@ -477,12 +482,46 @@ impl Shell {
         slices[0]
     }
 
-    fn _run(&mut self, elem : ~LineElem) {
-        match elem.file {
-            Some(file) => {
+    fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
+        match self.parse_process(elem.cmd, None, None) {
+            Some(mut process) => {
+                match elem.file {
+                    Some(file) => {
+                        match file.mode {
+                            Read => {
+                                Some(input_redirect(process, &file.path))
+                            }
+                            Write => {
+                                output_redirect(process, &file.path);
+                                None
+                            }
+                        }
+                    }
+                    None => {
+                        match elem.pipe {
+                            Some(pipe_elem) => {
+                                let pipe_name = pipe_elem.clone().cmd;
+                                match self._run(pipe_elem) {
+                                    Some(mut pipe) => {
+                                        write_buffer(process.output(), pipe.input());
+                                        Some(process)
+                                    }
+                                    None => {
+                                        println!("ERR: Broken pipeline on {:s}", pipe_name);
+                                        None
+                                    }
+                                }
+                            }
+                            None => {
+                                None
+                            }
+                        }
+                    }
+                }
             }
             None => {
-
+                println!("{:s} is not a command!", elem.cmd);
+                None
             }
         }
     }
@@ -497,12 +536,16 @@ impl Shell {
             parse_l_redirect(cmd_line);
         }
         else {
-            self.parse_process(cmd_line);
+            self.parse_process(cmd_line, Some(STDIN_FILENO), Some(STDOUT_FILENO));
         }
     }
 
     // Parse a new lone process. Background/foreground it appropriately.
-    fn parse_process(&mut self, cmd_line : &str) -> Option<Process> {
+    fn parse_process(&mut self,
+                     cmd_line : &str,
+                     stdin: Option<i32>,
+                     stdout:Option<i32>) 
+                    -> Option<~Process> {
         maybe(Cmd::new(cmd_line), |cmd| {
                 if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
                     let mut argv = cmd.argv.to_owned();
@@ -513,7 +556,7 @@ impl Shell {
                     None
                 }
                 else {
-                    Some(make_process(cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO)))
+                    Some(~make_process(cmd, stdin, stdout))
                 }
         })
     }
@@ -580,19 +623,27 @@ fn make_process(cmd : Cmd,
     FgProcess::new(cmd, stdin, stdout).run()
 }
 
+fn input_redirect(mut process: ~Process, path: &Path) -> ~Process {
+    let file = File::open_mode(path,
+                            std::io::Open,
+                            std::io::Read)
+        .expect(format!("Couldn't open file!"));
+    let file_buffer = &mut BufferedReader::new(file);
+    write_buffer(file_buffer, process.input());
+    process
+}
+
+fn write_buffer(input : &mut Reader, output: &mut Writer) {
+    output.write(input.read_to_end());
+}
+
 fn parse_l_redirect(cmd_line : &str) {
     let pair : ~[&str] = cmd_line.rsplit('<').collect();
     let filename = pair[0].trim();
     match Cmd::new(pair[1].trim()) {
         Some(cmd) => {
-            let mut process = make_process(cmd, None, Some(STDOUT_FILENO));
-            let file = File::open_mode(&Path::new(filename),
-                                    std::io::Open,
-                                    std::io::Read)
-                .expect(format!("Couldn't open {:s}!", filename));
-            let proc_input = process.input();
-            let mut file_buffer = BufferedReader::new(file);
-            proc_input.write(file_buffer.read_to_end());
+            let process = make_process(cmd, None, Some(STDOUT_FILENO));
+            input_redirect(~process, &Path::new(filename));
         }
         None => { 
         }
@@ -600,12 +651,20 @@ fn parse_l_redirect(cmd_line : &str) {
 }
 
 fn write_output_to_file(output : ~[u8],
-                        filename : &str) {
-    let mut file = File::open_mode(&Path::new(filename),
+                        path : &Path) {
+    let mut file = File::open_mode(path,
                                     std::io::Truncate, 
                                     std::io::Write)
-    .expect(format!("Opening {:s} failed!", filename));
+    .expect(format!("Failed to open a file for output!"));
     file.write(output);
+}
+
+fn output_redirect(mut process : ~Process, path : &Path) -> ~Process {
+    let output = process.finish_with_output();
+    if output.status.success() {
+        write_output_to_file(output.output, path);
+    }
+    process
 }
 
 fn parse_r_redirect(cmd_line : &str) {
@@ -616,7 +675,7 @@ fn parse_r_redirect(cmd_line : &str) {
             let mut process = make_process(cmd, None, None);
             let output = process.finish_with_output();
             if output.status.success() {
-                write_output_to_file(output.output, file);
+                write_output_to_file(output.output, &Path::new(file));
             }
         }
         None => {

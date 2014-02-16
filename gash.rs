@@ -418,35 +418,39 @@ impl Shell {
                     Some(pipe_redirect(left, right))
                 }
                 None => {
-                    match elem.clone().file {
-                        Some(file) => {
-                            match file.mode {
-                                Read => {
-                                    let mut process : ~Process;
-                                    if elem.last {
-                                        process = self.parse_process(elem.cmd, None, Some(STDOUT_FILENO)).expect("Couldn't spawn!");
-                                    } 
-                                    else {
-                                        process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-                                    }
-                                    Some(input_redirect(process, &file.path))
-                                }
-                                Write => {
-                                    let process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-                                    output_redirect(process, &file.path);
-                                    None
-                                }
-                            }
+                    self.pipe_file(elem)
+                }
+            }
+        }
+    }
+
+    fn pipe_file(&mut self, elem : ~LineElem) -> Option<~Process> {
+        match elem.clone().file {
+            Some(file) => {
+                match file.mode {
+                    Read => {
+                        let mut process : ~Process;
+                        if elem.last {
+                            process = self.parse_process(elem.cmd, None, Some(STDOUT_FILENO)).expect("Couldn't spawn!");
+                        } 
+                        else {
+                            process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
                         }
-                        None => {
-                            if elem.last {
-                                self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
-                            } 
-                            else {
-                                self.parse_process(elem.cmd, None, None)
-                            }
-                        }
+                        Some(input_redirect(process, &file.path))
                     }
+                    Write => {
+                        let process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+                        output_redirect(process, &file.path);
+                        None
+                    }
+                }
+            }
+            None => {
+                if elem.last {
+                    self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
+                } 
+                else {
+                    self.parse_process(elem.cmd, None, None)
                 }
             }
         }
@@ -690,14 +694,10 @@ fn output_redirect(mut process : ~Process, path : &Path) -> ~Process {
 }
 
 fn pipe_redirect(mut left: ~Process, mut right: ~Process) -> ~Process {
-    let output = left.finish_with_output();
-    if output.status.success() {
-        right.input().write(output.output);
-    }
-    else {
-        right.input().write(output.output);
-        println("ERR: Broken pipe");
-    }
+    println("Redirecting input");
+    right.input().write(left.output().read_to_end());
+    println("Closing left output");
+    left.close_outputs();
     right
 }
 

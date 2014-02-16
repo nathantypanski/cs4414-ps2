@@ -13,7 +13,7 @@
 extern mod extra;
 
 use std::{run, os};
-use std::io::buffered::{BufferedReader, BufferedWriter};
+use std::io::buffered::BufferedReader;
 use std::io::{stdin, stdout, stdio, File, Truncate};
 use std::io::process::ProcessExit;
 use std::io::signal::{Listener, Interrupt};
@@ -449,13 +449,17 @@ impl Shell {
         }
     }
 
-   
     // Determine the type of the current block, and send it to the right
     // parsing function.
     fn run_cmdline(&mut self, cmd_line: &str) {
         let lex = self.lex(cmd_line);
         let parse = self.parse(lex);
-        self._run(parse);
+        if parse.pipe.is_none() && parse.file.is_none() {
+            self.parse_process(parse.cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO));
+        }
+        else {
+            self._run(parse);
+        }
     }
 
     // Parse a new lone process. Background/foreground it appropriately.

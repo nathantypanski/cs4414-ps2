@@ -13,8 +13,8 @@
 extern mod extra;
 
 use std::{run, os};
-use std::io::buffered::BufferedReader;
-use std::io::{stdin, stdio, File, Truncate};
+use std::io::buffered::{BufferedReader, BufferedWriter};
+use std::io::{stdin, stdout, stdio, File, Truncate};
 use std::io::process::ProcessExit;
 use std::io::signal::{Listener, Interrupt};
 use std::path::posix::Path;
@@ -285,6 +285,7 @@ impl Shell {
     fn display_prompt(&mut self) {
         // Standard input reader
         let mut stdin = BufferedReader::new(stdin());
+        let mut stdout = BufferedWriter::new(stdout());
         // Show the prompt
         print(self.cmd_prompt);
         stdio::flush();
@@ -326,7 +327,19 @@ impl Shell {
                 println!("{:?}", lex);
                 let parse = self.parse(lex);
                 println!("{:?}", parse);
-                self._run(parse);
+                match(self._run(parse)) {
+                    Some(mut process) => {
+                        println("DEBUG: reading output to stdout ...");
+                        let output = process.finish_with_output();
+                        if output.status.success() {
+                            println("DEBUG: success.");
+                            stdout.write(output.output);
+                        }
+                    }
+                    None => {
+                        println("DEBUG: No output.");
+                    }
+                }
                 self.display_prompt();
             }
         }
@@ -482,17 +495,34 @@ impl Shell {
         slices[0]
     }
 
+    fn pipe(&mut self, mut process: ~Process, pipe_elem : ~LineElem) -> Option<~Process> {
+        let pipe_name = pipe_elem.clone().cmd;
+        match self._run(pipe_elem) {
+            Some(mut pipe) => {
+                println!("DEBUG: Piping to {:s}", pipe_name);
+                pipe.input().write(process.output().read_to_end());
+                Some(pipe)
+            }
+            None => {
+                println!("ERR: Broken pipeline on {:s}", pipe_name);
+                None
+            }
+        }
+    }
+
     fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
         match self.parse_process(elem.cmd, None, None) {
-            Some(mut process) => {
+            Some(process) => {
                 match elem.file {
                     Some(file) => {
                         match file.mode {
                             Read => {
+                                println("DEBUG: Redirecting input");
                                 Some(input_redirect(process, &file.path))
                             }
                             Write => {
                                 output_redirect(process, &file.path);
+                                println("DEBUG: Redirecting output");
                                 None
                             }
                         }
@@ -500,20 +530,11 @@ impl Shell {
                     None => {
                         match elem.pipe {
                             Some(pipe_elem) => {
-                                let pipe_name = pipe_elem.clone().cmd;
-                                match self._run(pipe_elem) {
-                                    Some(mut pipe) => {
-                                        write_buffer(process.output(), pipe.input());
-                                        Some(process)
-                                    }
-                                    None => {
-                                        println!("ERR: Broken pipeline on {:s}", pipe_name);
-                                        None
-                                    }
-                                }
+                                self.pipe(process, pipe_elem)
                             }
                             None => {
-                                None
+                                println!("DEBUG: No pipes for {:s}", elem.cmd);
+                                Some(process)
                             }
                         }
                     }

@@ -68,6 +68,7 @@ struct LineElem {
     cmd: ~str,
     pipe: Option<~LineElem>,
     file: Option<PathType>,
+    last : bool,
 }
 impl LineElem {
     fn new(cmd: ~str) -> ~LineElem {
@@ -75,6 +76,7 @@ impl LineElem {
             cmd: cmd.to_owned(),
             pipe: None,
             file: None,
+            last: true,
         }
     }
 
@@ -86,6 +88,7 @@ impl LineElem {
                     cmd: self.cmd.to_owned(), 
                     pipe: Some(elem.set_path(path)),
                     file: self.file.clone(),
+                    last: self.last,
                 }
             }
             None => {
@@ -93,6 +96,7 @@ impl LineElem {
                     cmd: self.cmd.to_owned(), 
                     pipe: self.pipe.clone(),
                     file: Some(path),
+                    last: self.last,
                 }
             }
         }
@@ -105,14 +109,16 @@ impl LineElem {
                 ~LineElem {
                     cmd: self.cmd.to_owned(), 
                     pipe: Some(elem.set_pipe(pipe)),
-                    file: self.file.clone()
+                    file: self.file.clone(),
+                    last: false,
                 }
             }
             None => {
                 ~LineElem {
                     cmd: self.cmd.to_owned(), 
                     pipe: Some(pipe), 
-                    file: self.file.clone()
+                    file: self.file.clone(),
+                    last: false,
                 }
             }
         }
@@ -328,6 +334,150 @@ impl Shell {
         }
     }
 
+    fn lex(&mut self, cmd_line: &str) -> ~[~str] {
+        let mut slices : ~[~str] = ~[];
+        let mut last = 0;
+        let mut current = 0;
+        for i in range(0, cmd_line.len()) {
+            if self.breakchars.contains(&cmd_line.char_at(i)) && i != 0 {
+                if last != 0 {
+                    slices.push(cmd_line.slice(last+1, current).trim().to_owned());
+                }
+                else {
+                    slices.push(cmd_line.slice_to(current).trim().to_owned());
+                }
+                slices.push(cmd_line.slice(i, i+1).to_owned());
+                last = i;
+            }
+            current += 1;
+        }
+        if last == 0 {
+            slices.push(cmd_line.trim().to_owned());
+        }
+        else {
+            slices.push(cmd_line.slice_from(last+1).trim().to_owned());
+        }
+        slices
+    }
+
+    fn parse(&mut self, words: ~[~str]) -> ~LineElem {
+        let mut slices : ~[~LineElem] = ~[];
+        let mut in_file = false;
+        let mut out_file = false;
+        let mut pipe = false;
+        for i in range(0, words.len()) {
+            if words[i].len() == 1 
+                    && self.breakchars.contains(&words[i].char_at(0)) {
+                if words[i] == ~">" {
+                    out_file = true;
+                }
+                if words[i] == ~"<" {
+                    in_file = true;
+                }
+                if words[i] == ~"|" {
+                    pipe = true;
+                }
+            }
+            else {
+                if out_file {
+                    let cmd = slices.pop();
+                    slices.push(cmd.set_path(PathType::new(words[i].to_owned(), Write)));
+                    out_file = false;
+                }
+                else if in_file {
+                    let cmd = slices.pop();
+                    slices.push(cmd.set_path(PathType::new(words[i].to_owned(), Read)));
+                    in_file = false;
+                }
+                else if pipe {
+                    let cmd = slices.pop();
+                    slices.push(cmd.set_pipe(LineElem::new(words[i].to_owned())));
+                    pipe = false;
+                }
+                else {
+                    slices.push(LineElem::new(words[i].to_owned()));
+                }
+            }
+        }
+        slices[0]
+    }
+
+    fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
+        if elem.last {
+            println("DEBUG: Last elem");
+            self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
+        }
+        else {
+            match elem.clone().pipe {
+                Some(pipe_elem) => {
+                    println("DEBUG: Created left");
+                    let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+                    println("DEBUG: Created right");
+                    let right = self._run(pipe_elem).expect("Broken pipe"); 
+                    Some(pipe_redirect(left, right))
+                }
+                None => {
+                    self.parse_process(elem.cmd, None, None)
+                }
+            }
+        }
+    }
+   
+    // Determine the type of the current block, and send it to the right
+    // parsing function.
+    fn run_cmdline(&mut self, cmd_line: &str) {
+        let lex = self.lex(cmd_line);
+        let parse = self.parse(lex);
+        println!("DEBUG: {:?}", parse);
+        self._run(parse);
+        /*
+        match(self._run(parse)) {
+            Some(mut process) => {
+                println("DEBUG: reading output to stdout ...");
+                process.finish();
+            }
+            None => {
+                println("DEBUG: No output.");
+            }
+        }
+        */
+    }
+
+    // Parse a new lone process. Background/foreground it appropriately.
+    fn parse_process(&mut self,
+                     cmd_line : &str,
+                     stdin: Option<i32>,
+                     stdout:Option<i32>) 
+                    -> Option<~Process> {
+        maybe(Cmd::new(cmd_line), |cmd| {
+                if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
+                    let mut argv = cmd.argv.to_owned();
+                    argv.pop();
+                    self.make_bg_process(Cmd{
+                        program:cmd.program,
+                        argv:argv});
+                    None
+                }
+                else {
+                    Some(~(FgProcess::new(cmd, stdin, stdout).run()))
+                }
+        })
+    }
+
+    // background processes.
+    fn make_bg_process(&mut self, cmd : Cmd) {
+        let name = cmd.program.to_owned();
+        let mut process = BgProcess::new(cmd);
+        match process.run() {
+            Some(pid) => {
+                println!("{:s} {:i}", name, pid);
+                self.processes.push(~process);
+            }
+            None => {
+            }
+        }
+    }
+
     // Nice extra feature: list running jobs.
     fn jobs(&mut self) {
         for cmd in self.processes.iter() {
@@ -408,168 +558,6 @@ impl Shell {
             os::change_dir(&path);
         }
     }
-
-    fn lex(&mut self, cmd_line: &str) -> ~[~str] {
-        let mut slices : ~[~str] = ~[];
-        let mut last = 0;
-        let mut current = 0;
-        for i in range(0, cmd_line.len()) {
-            if self.breakchars.contains(&cmd_line.char_at(i)) && i != 0 {
-                if last != 0 {
-                    slices.push(cmd_line.slice(last+1, current).trim().to_owned());
-                }
-                else {
-                    slices.push(cmd_line.slice_to(current).trim().to_owned());
-                }
-                slices.push(cmd_line.slice(i, i+1).to_owned());
-                last = i;
-            }
-            current += 1;
-        }
-        if last == 0 {
-            slices.push(cmd_line.trim().to_owned());
-        }
-        else {
-            slices.push(cmd_line.slice_from(last+1).trim().to_owned());
-        }
-        slices
-    }
-
-    fn parse(&mut self, words: ~[~str]) -> ~LineElem {
-        let mut slices : ~[~LineElem] = ~[];
-        let mut in_file = false;
-        let mut out_file = false;
-        let mut pipe = false;
-        for i in range(0, words.len()) {
-            if words[i].len() == 1 
-                    && self.breakchars.contains(&words[i].char_at(0)) {
-                if words[i] == ~">" {
-                    out_file = true;
-                }
-                if words[i] == ~"<" {
-                    in_file = true;
-                }
-                if words[i] == ~"|" {
-                    pipe = true;
-                }
-            }
-            else {
-                if out_file {
-                    let cmd = slices.pop();
-                    slices.push(cmd.set_path(PathType::new(words[i].to_owned(), Write)));
-                    out_file = false;
-                }
-                else if in_file {
-                    let cmd = slices.pop();
-                    slices.push(cmd.set_path(PathType::new(words[i].to_owned(), Read)));
-                    in_file = false;
-                }
-                else if pipe {
-                    let cmd = slices.pop();
-                    slices.push(cmd.set_pipe(LineElem::new(words[i].to_owned())));
-                    pipe = false;
-                }
-                else {
-                    slices.push(LineElem::new(words[i].to_owned()));
-                }
-            }
-        }
-        slices[0]
-    }
-
-    fn pipe(&mut self, mut left: ~Process, mut right: ~Process) -> ~Process {
-        let output = left.finish_with_output();
-        if output.status.success() {
-            right.input().write(output.output);
-        }
-        right
-    }
-
-    fn file(&mut self, process: ~Process, file: Option<PathType>) -> Option<~Process> {
-        match file {
-            Some(file) => {
-                match file.mode {
-                    Read => {
-                        Some(input_redirect(process, &file.path))
-                    }
-                    Write => {
-                        output_redirect(process, &file.path);
-                        None
-                    }
-                }
-            }
-            None => {
-                Some(process)
-            }
-        }
-    }
-
-    fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
-        match elem.clone().pipe {
-            Some(pipe_elem) => {
-                let mut process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-                let mut pipe = self._run(pipe_elem).expect("Broken pipe"); 
-                Some(self.pipe(process, pipe))
-            }
-            None => {
-                self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
-            }
-        }
-    }
-   
-    // Determine the type of the current block, and send it to the right
-    // parsing function.
-    fn run_cmdline(&mut self, cmd_line: &str) {
-        let mut stdout = BufferedWriter::new(stdout());
-        let lex = self.lex(cmd_line);
-        println!("{:?}", lex);
-        let parse = self.parse(lex);
-        println!("{:?}", parse);
-        match(self._run(parse)) {
-            Some(mut process) => {
-                println("DEBUG: reading output to stdout ...");
-                process.finish();
-            }
-            None => {
-                println("DEBUG: No output.");
-            }
-        }
-    }
-
-    // Parse a new lone process. Background/foreground it appropriately.
-    fn parse_process(&mut self,
-                     cmd_line : &str,
-                     stdin: Option<i32>,
-                     stdout:Option<i32>) 
-                    -> Option<~Process> {
-        maybe(Cmd::new(cmd_line), |cmd| {
-                if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
-                    let mut argv = cmd.argv.to_owned();
-                    argv.pop();
-                    self.make_bg_process(Cmd{
-                        program:cmd.program,
-                        argv:argv});
-                    None
-                }
-                else {
-                    Some(~FgProcess::new(cmd, stdin, stdout).run())
-                }
-        })
-    }
-
-    // background processes.
-    fn make_bg_process(&mut self, cmd : Cmd) {
-        let name = cmd.program.to_owned();
-        let mut process = BgProcess::new(cmd);
-        match process.run() {
-            Some(pid) => {
-                println!("{:s} {:i}", name, pid);
-                self.processes.push(~process);
-            }
-            None => {
-            }
-        }
-    }
 }
 
 fn get_cmdline_from_args() -> Option<~str> {
@@ -643,6 +631,34 @@ fn output_redirect(mut process : ~Process, path : &Path) -> ~Process {
     }
     process
 }
+
+fn pipe_redirect(mut left: ~Process, mut right: ~Process) -> ~Process {
+    let output = left.finish_with_output();
+    if output.status.success() {
+        right.input().write(output.output);
+    }
+    right
+}
+
+fn file(process: ~Process, file: Option<PathType>) -> Option<~Process> {
+    match file {
+        Some(file) => {
+            match file.mode {
+                Read => {
+                    Some(input_redirect(process, &file.path))
+                }
+                Write => {
+                    output_redirect(process, &file.path);
+                    None
+                }
+            }
+        }
+        None => {
+            Some(process)
+        }
+    }
+}
+
 
 // Describes a computation that could fail.
 // If v is Some(...), then f is called on v and the result is returned.

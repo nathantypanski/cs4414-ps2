@@ -411,6 +411,7 @@ impl Shell {
         else {
             match elem.clone().pipe {
                 Some(pipe_elem) => {
+                    println!("Piping {:s} | {:s}", elem.cmd, pipe_elem.cmd);
                     let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
 
                     let right = self._run(pipe_elem).expect("Broken pipe"); 
@@ -654,7 +655,7 @@ fn split_words(words : &str) -> ~[~str] {
         splits.push(words.slice_from(lastword).to_owned());
     }
     println!("DEBUG: split_words: {:?}", splits);
-    splits
+    splits.iter().map(|x| x.replace("\\n", "\n")).collect()
 }
 
 fn input_redirect(mut process: ~Process, path: &Path) -> ~Process {
@@ -692,6 +693,10 @@ fn pipe_redirect(mut left: ~Process, mut right: ~Process) -> ~Process {
     let output = left.finish_with_output();
     if output.status.success() {
         right.input().write(output.output);
+    }
+    else {
+        right.input().write(output.output);
+        println("ERR: Broken pipe");
     }
     right
 }

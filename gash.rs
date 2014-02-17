@@ -123,10 +123,22 @@ impl LineElem {
             }
         }
     }
+    
+    fn iter(&self) -> ~LineElem {
+       ~self.clone()
+    }
 }
+
 impl Iterator<~LineElem> for LineElem {
     fn next(&mut self) -> Option<~LineElem> {
-        self.pipe.clone()
+        let pipe = self.pipe.clone();
+        match self.pipe.clone() {
+            Some(pipe) => {
+                self.pipe = pipe.pipe;
+            }
+            None => { }
+        }
+        pipe
     }
 }
 
@@ -409,21 +421,20 @@ impl Shell {
         slices[0]
     }
 
-    fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
+    fn _run(&mut self, mut elem : ~LineElem) -> Option<~Process> {
         if elem.last && elem.file.is_none() {
+            println!("DEBUG: {:s} is last.", elem.cmd);
             self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
         }
         else {
-            if elem.pipe.is_some() {
-
-            }
             match elem.clone().pipe {
                 Some(pipe_elem) => {
                     println!("Piping {:s} | {:s}", elem.cmd, pipe_elem.cmd);
                     let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-
-                    let right = self._run(pipe_elem).expect("Broken pipe"); 
-                    Some(pipe_redirect(left, right))
+                    Some(elem.iter().fold(left, |left, right| {
+                        let right = self.pipe_file(right).expect("Couldn't spawn!");
+                        pipe_redirect(left,right)
+                    }))
                 }
                 None => {
                     self.pipe_file(elem)
@@ -433,6 +444,7 @@ impl Shell {
     }
 
     fn pipe_file(&mut self, elem : ~LineElem) -> Option<~Process> {
+        println!("piping file for {:s}", elem.cmd);
         match elem.clone().file {
             Some(file) => {
                 match file.mode {
@@ -703,7 +715,7 @@ fn output_redirect(mut process : ~Process, path : &Path) -> ~Process {
 
 fn pipe_redirect(mut left: ~Process, mut right: ~Process) -> ~Process {
     println("Redirecting input");
-    right.input().write(left.output().read_to_end());
+    right.input().write(left.finish_with_output().output);
     println("Closing left output");
     left.close_outputs();
     right

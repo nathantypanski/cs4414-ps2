@@ -11,11 +11,10 @@
 //
 
 extern mod extra;
-use extra::getopts;
 
-use std::{run, os};
+use std::os;
 use std::io::buffered::BufferedReader;
-use std::io::{stdin, stdout, stdio, File, Truncate};
+use std::io::{stdin, stdout, stdio};
 use std::io::process::ProcessExit;
 use std::io::signal::{Listener, Interrupt};
 use std::path::posix::Path;
@@ -29,7 +28,9 @@ use std::libc::types::os::arch::posix88::pid_t;
 use std::libc::consts::os::posix88::{STDOUT_FILENO, STDIN_FILENO};
 use std::libc;
 
+use helpers::{split_words, input_redirect, output_redirect, pipe_redirect, get_cmdline_from_args, maybe, borrowed_maybe};
 mod helpers;
+mod cmd;
 
 extern {
   pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;
@@ -149,30 +150,6 @@ impl Iterator<~LineElem> for LineElem {
     }
 }
 
-// The basic unit for a command that could be run.
-#[deriving(Clone)]
-struct Cmd {
-    program : ~str,
-    argv : ~[~str],
-}
-
-impl Cmd {
-    // Make a new command. Handles splitting the input into words.
-    fn new(cmd_name: &str) -> Option<Cmd> {
-        let mut argv: ~[~str] = split_words(cmd_name);
-        if argv.len() > 0 {
-            let program: ~str = argv.remove(0);
-            cmd_exists(Cmd {
-                program : program,
-                argv : argv,
-            })
-        }
-        else {
-            None
-        }
-    }
-}
-
 // A foreground process is a command, arguments, and file descriptors for its
 // input and output.
 struct FgProcess {
@@ -182,7 +159,7 @@ struct FgProcess {
     stdout      : Option<i32>,
 }
 impl FgProcess {
-    fn new(cmd : Cmd,
+    fn new(cmd : cmd::Cmd,
            stdin : Option<i32>,
            stdout : Option<i32>) 
         -> FgProcess
@@ -222,7 +199,7 @@ struct BgProcess {
     stdout      : Option<i32>,
 }
 impl BgProcess {
-    fn new(cmd : Cmd) -> BgProcess {
+    fn new(cmd : cmd::Cmd) -> BgProcess {
         BgProcess {
             command: cmd.program.to_owned(),
             args: cmd.argv.to_owned(),
@@ -435,7 +412,7 @@ impl Shell {
             let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
             Some(elem.iter().fold(left, |left, right| {
                 let right = self.pipe_file(right).expect("Couldn't spawn!");
-                helpers::pipe_redirect(left,right)
+                pipe_redirect(left,right)
             }))
         }
         else {
@@ -451,11 +428,11 @@ impl Shell {
                 match file.mode {
                     Read => {
                         let process = self.to_process(elem).expect("Couldn't spawn!");
-                        Some(helpers::input_redirect(process, &file.path))
+                        Some(input_redirect(process, &file.path))
                     }
                     Write => {
                         let process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-                        helpers::output_redirect(process, &file.path);
+                        output_redirect(process, &file.path);
                         None
                     }
                 }
@@ -494,11 +471,11 @@ impl Shell {
                      stdin: Option<i32>,
                      stdout:Option<i32>) 
                     -> Option<~Process> {
-        helpers::maybe(Cmd::new(cmd_line), |cmd| {
+        maybe(cmd::Cmd::new(cmd_line), |cmd| {
                 if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
                     let mut argv = cmd.argv.to_owned();
                     argv.pop();
-                    self.make_bg_process(Cmd{
+                    self.make_bg_process(cmd::Cmd{
                         program:cmd.program,
                         argv:argv});
                     None
@@ -510,7 +487,7 @@ impl Shell {
     }
 
     // background processes.
-    fn make_bg_process(&mut self, cmd : Cmd) {
+    fn make_bg_process(&mut self, cmd : cmd::Cmd) {
         let name = cmd.program.to_owned();
         let mut process = BgProcess::new(cmd);
         match process.run() {
@@ -544,7 +521,7 @@ impl Shell {
         dead = ~[];
         let mut i = 0;
         for cmd in self.processes.iter() {
-            helpers::borrowed_maybe(&cmd.exit_port, |port| match port.try_recv() {
+            borrowed_maybe(&cmd.exit_port, |port| match port.try_recv() {
                 Some(_) => {dead.push(i); Some(i)},
                 _ => None,
             });
@@ -602,83 +579,6 @@ impl Shell {
             os::change_dir(&path);
         }
     }
-}
-
-// Begin processing program arguments and initiate the parameters.
-fn get_cmdline_from_args() -> Option<~str> {
-    let args = os::args();
-    
-    let opts = ~[
-        getopts::optopt("c")
-    ];
-    
-    let matches = match getopts::getopts(args.tail(), opts) {
-        Ok(m) => { m }
-        Err(f) => { fail!(f.to_err_msg()) }
-    };
-    
-    if matches.opt_present("c") {
-        let cmd_str = match matches.opt_str("c") {
-            Some(cmd_str) => {cmd_str.to_owned()}, 
-            None          => {~""}
-        };
-        return Some(cmd_str);
-    } else {
-        return None;
-    }
-}
-
-// Determine whether a command exists using "which".
-fn cmd_exists(cmd : Cmd) -> Option<Cmd> {
-    let ret = run::process_output("which", [cmd.program.to_owned()]);
-    if (ret.expect("exit code error.").status.success()) {
-        Some(cmd)
-    }
-    else {
-        None
-    }
-}
-
-// Ugly, ugly, word-splitting parser for individual commands. Gets the job
-// done, though.
-fn split_words(words : &str) -> ~[~str] {
-    let mut splits = ~[];
-    let mut lastword = 0;
-    let mut quoted = false;
-    for i in range(0, words.len()) {
-        if !quoted {
-            if i == 0 {
-                if words.char_at(i) == '"' {
-                    quoted = true;
-                    lastword = i+1;
-                }
-            }
-            else {
-                if words.char_at(i) == '"' && words.char_at(i-1) != '\\' {
-                    quoted = true;
-                    lastword = i+1;
-                }
-                else if words.char_at(i) == ' ' && words.char_at(i-1) != '\\' {
-                    let word = words.slice(lastword, i).to_owned();
-                    if word != ~"" {
-                        splits.push(word);
-                    }
-                    lastword = i+1;
-                }
-            }
-        }
-        else {
-            if words.char_at(i) == '"' {
-                splits.push(words.slice(lastword, i).to_owned());
-                lastword = i+1;
-                quoted = false;
-            }
-        }
-    }
-    if lastword != words.len() {
-        splits.push(words.slice_from(lastword).to_owned());
-    }
-    splits.iter().map(|x| x.replace("\\n", "\n")).collect()
 }
 
 fn main() {

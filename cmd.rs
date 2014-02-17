@@ -11,6 +11,7 @@ pub struct Cmd {
 
 impl Cmd {
     // Make a new command. Handles splitting the input into words.
+    #[allow(dead_code)]
     pub fn new(cmd_name: &str) -> Option<Cmd> {
         let mut argv: ~[~str] = helpers::split_words(cmd_name);
         if argv.len() > 0 {
@@ -26,6 +27,7 @@ impl Cmd {
     }
 }
 // Determine whether a command exists using "which".
+#[allow(dead_code)]
 pub fn cmd_exists(cmd : Cmd) -> Option<Cmd> {
     let ret = run::process_output("which", [cmd.program.to_owned()]);
     if (ret.expect("exit code error.").status.success()) {

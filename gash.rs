@@ -328,14 +328,6 @@ impl Shell {
         let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
         self.disown_dead();
 
-        // Push commands onto the history
-        match program {
-            "" => {}
-            _  => { 
-                self.push_hist(cmd_line) 
-            }
-        }
-
         match program {
             "" =>  {
                 self.display_prompt(); 
@@ -348,14 +340,17 @@ impl Shell {
                 self.display_prompt();
             }
             "jobs" => {
+                self.push_hist(cmd_line);
                 self.jobs();
                 self.display_prompt();
             }
             "cd" =>  {
+                self.push_hist(cmd_line);
                 self.chdir(cmd_line); 
                 self.display_prompt();
             }
             _ => { 
+                self.push_hist(cmd_line);
                 self.run_cmdline(cmd_line);
                 self.display_prompt();
             }

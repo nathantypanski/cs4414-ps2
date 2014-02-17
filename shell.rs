@@ -14,13 +14,14 @@ use helpers::{split_words, input_redirect, output_redirect, pipe_redirect,
 
 use shellprocess::FgProcess;
 use shellprocess::BgProcess;
-use lineelem::{LineElem, PathType, Read, Write};
 use cmd::Cmd;
+use lineelem::{LineElem, Read, Write};
 
 mod helpers;
 mod lineelem;
 mod shellprocess;
 mod cmd;
+mod parser;
 
 
 extern {
@@ -32,7 +33,6 @@ pub struct Shell {
     cmd_prompt : ~str,
     history    : ~[~str],
     processes  : ~[~BgProcess],
-    breakchars : ~[char],
     broken : bool,
 }
 
@@ -42,7 +42,6 @@ impl Shell {
             cmd_prompt: prompt_str.to_owned(),
             history: ~[],
             processes: ~[],
-            breakchars: ~['>', '<', '|'],
             broken: false,
         }
     }
@@ -118,78 +117,6 @@ impl Shell {
         }
     }
 
-    // Split the input up into words.
-    fn lex(&mut self, cmd_line: &str) -> ~[~str] {
-        let mut slices : ~[~str] = ~[];
-        let mut last = 0;
-        let mut current = 0;
-        for i in range(0, cmd_line.len()) {
-            // This is a special character.
-            if self.breakchars.contains(&cmd_line.char_at(i)) && i != 0 {
-                if last != 0 {
-                    slices.push(cmd_line.slice(last+1, current).trim().to_owned());
-                }
-                else {
-                    slices.push(cmd_line.slice_to(current).trim().to_owned());
-                }
-                slices.push(cmd_line.slice(i, i+1).to_owned());
-                last = i;
-            }
-            current += 1;
-        }
-        if last == 0 {
-            slices.push(cmd_line.trim().to_owned());
-        }
-        else {
-            slices.push(cmd_line.slice_from(last+1).trim().to_owned());
-        }
-        slices
-    }
-
-    // Parse the lexxed input into a (recursive linked by .pipe field) 
-    // list of LineElems.
-    fn parse(&mut self, words: ~[~str]) -> ~LineElem {
-        let mut slices : ~[~LineElem] = ~[];
-        let mut in_file = false;
-        let mut out_file = false;
-        let mut pipe = false;
-        for i in range(0, words.len()) {
-            if words[i].len() == 1 
-                    && self.breakchars.contains(&words[i].char_at(0)) {
-                if words[i] == ~">" {
-                    out_file = true;
-                }
-                if words[i] == ~"<" {
-                    in_file = true;
-                }
-                if words[i] == ~"|" {
-                    pipe = true;
-                }
-            }
-            else {
-                if out_file {
-                    let cmd = slices.pop();
-                    slices.push(cmd.set_path(PathType::new(words[i].to_owned(), Write)));
-                    out_file = false;
-                }
-                else if in_file {
-                    let cmd = slices.pop();
-                    slices.push(cmd.set_path(PathType::new(words[i].to_owned(), Read)));
-                    in_file = false;
-                }
-                else if pipe {
-                    let cmd = slices.pop();
-                    slices.push(cmd.set_pipe(LineElem::new(words[i].to_owned())));
-                    pipe = false;
-                }
-                else {
-                    slices.push(LineElem::new(words[i].to_owned()));
-                }
-            }
-        }
-        slices[0]
-    }
-
     fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
         if elem.pipe.is_some() {
             let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
@@ -238,8 +165,8 @@ impl Shell {
     // Determine the type of the current block, and send it to the right
     // parsing function.
     pub fn run_cmdline(&mut self, cmd_line: &str) {
-        let lex = self.lex(cmd_line);
-        let parse = self.parse(lex);
+        let lex = parser::lex(cmd_line);
+        let parse = parser::parse(lex);
         if parse.pipe.is_none() && parse.file.is_none() {
             self.parse_process(parse.cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO));
         }

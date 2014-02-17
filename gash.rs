@@ -63,6 +63,7 @@ enum FilePermission {
     Write,
 }
 
+// Represents a parsed element of a pipeline / io redirect.
 #[deriving(Clone)]
 struct LineElem {
     cmd: ~str,
@@ -80,6 +81,9 @@ impl LineElem {
         }
     }
 
+    // Set the path at the bottom of the pipe chain. This means e.g. in order
+    // to set an input path, it needs to happen *before* any pipes are tied
+    // to this LineElem.
     fn set_path(&self, path: PathType) -> ~LineElem {
         let this_pipe = self.pipe.clone();
         match this_pipe {
@@ -102,6 +106,8 @@ impl LineElem {
         }
     }
 
+    // Tie a new pipe to this LineElem. If a pipeline already exists, add
+    // the pipe to the bottom of the pipeline.
     fn set_pipe(&self, pipe: ~LineElem) -> ~LineElem {
         let this_pipe = self.pipe.clone();
         match this_pipe {
@@ -150,6 +156,7 @@ struct Cmd {
 }
 
 impl Cmd {
+    // Make a new command. Handles splitting the input into words.
     fn new(cmd_name: &str) -> Option<Cmd> {
         let mut argv: ~[~str] = split_words(cmd_name);
         if argv.len() > 0 {
@@ -165,6 +172,8 @@ impl Cmd {
     }
 }
 
+// A foreground process is a command, arguments, and file descriptors for its
+// input and output.
 struct FgProcess {
     command     : ~str,
     args        : ~[~str],
@@ -277,6 +286,8 @@ impl Shell {
         }
     }
 
+    // Start the shell with an interrupt handler. Only needed when
+    // an interactive shell is used.
     fn start(&mut self) {
         // Setup the interrupt handler. Has to happen here, or it won't 
         // retain control over interrupts.
@@ -300,10 +311,11 @@ impl Shell {
             });
             return ();
         });
-
         self.display_prompt();
     }
 
+    // Show the prompt. If called by itself, without start(), no interrupt
+    // handling will occur.
     fn display_prompt(&mut self) {
         // Standard input reader
         let mut stdin = BufferedReader::new(stdin());
@@ -350,11 +362,13 @@ impl Shell {
         }
     }
 
+    // Split the input up into words.
     fn lex(&mut self, cmd_line: &str) -> ~[~str] {
         let mut slices : ~[~str] = ~[];
         let mut last = 0;
         let mut current = 0;
         for i in range(0, cmd_line.len()) {
+            // This is a special character.
             if self.breakchars.contains(&cmd_line.char_at(i)) && i != 0 {
                 if last != 0 {
                     slices.push(cmd_line.slice(last+1, current).trim().to_owned());
@@ -376,6 +390,8 @@ impl Shell {
         slices
     }
 
+    // Parse the lexxed input into a (recursive linked by .pipe field) 
+    // list of LineElems.
     fn parse(&mut self, words: ~[~str]) -> ~LineElem {
         let mut slices : ~[~LineElem] = ~[];
         let mut in_file = false;
@@ -431,6 +447,8 @@ impl Shell {
         }
     }
 
+    // "Pipe" output to or from a file. If no file is available, just return
+    // the created process.
     fn pipe_file(&mut self, elem : ~LineElem) -> Option<~Process> {
         match elem.clone().file {
             Some(file) => {
@@ -440,7 +458,7 @@ impl Shell {
                         Some(input_redirect(process, &file.path))
                     }
                     Write => {
-                        let process = self.to_process(elem).expect("Couldn't spawn!");
+                        let process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
                         output_redirect(process, &file.path);
                         None
                     }
@@ -452,6 +470,8 @@ impl Shell {
         }
     }
 
+    // Make a process from a LineElem. Sets the output to stdout if the "last"
+    // field is true.
     fn to_process(&mut self, elem : ~LineElem) -> Option<~Process> {
             self.parse_process(elem.cmd,
                                None, 
@@ -539,6 +559,7 @@ impl Shell {
         }
     }
 
+    // Kill all the background jobs. Used when "exit" is called at the CLI.
     fn kill_all(&mut self) {
         for p in self.processes.iter() {
             match p.pid {
@@ -563,11 +584,8 @@ impl Shell {
         &self.history.push(cmd_line.to_owned());
     }
 
+    // Show the history.
     fn show_hist(&mut self) {
-        println!("{:s}", self.get_hist());
-    }
-    
-    fn get_hist(&mut self) -> ~str {
         let mut hist = ~"";
         for i in self.history.iter() {
             let s = i.to_owned();
@@ -576,9 +594,10 @@ impl Shell {
                 _   => { hist = hist + "\n" + s; }
             }
         }
-        return hist
+        println!("{:s}", hist);
     }
-
+  
+    // Change directories.
     fn chdir(&mut self, cmd_line: &str) {
         let mut argv: ~[~str] = split_words(cmd_line);
         if argv.len() > 0 {
@@ -589,8 +608,8 @@ impl Shell {
     }
 }
 
+// Begin processing program arguments and initiate the parameters.
 fn get_cmdline_from_args() -> Option<~str> {
-    /* Begin processing program arguments and initiate the parameters. */
     let args = os::args();
     
     let opts = ~[
@@ -624,6 +643,8 @@ fn cmd_exists(cmd : Cmd) -> Option<Cmd> {
     }
 }
 
+// Ugly, ugly, word-splitting parser for individual commands. Gets the job
+// done, though.
 fn split_words(words : &str) -> ~[~str] {
     let mut splits = ~[];
     let mut lastword = 0;
@@ -668,14 +689,10 @@ fn input_redirect(mut process: ~Process, path: &Path) -> ~Process {
     let file = File::open_mode(path,
                             std::io::Open,
                             std::io::Read)
-        .expect(format!("Couldn't open file!"));
+        .expect(format!("ERR: Failed opening input file"));
     let file_buffer = &mut BufferedReader::new(file);
-    write_buffer(file_buffer, process.input());
+    process.input().write(file_buffer.read_to_end());
     process
-}
-
-fn write_buffer(input : &mut Reader, output: &mut Writer) {
-    output.write(input.read_to_end());
 }
 
 fn write_output_to_file(output : ~[u8],
@@ -683,7 +700,7 @@ fn write_output_to_file(output : ~[u8],
     let mut file = File::open_mode(path,
                                     std::io::Truncate,  
                                     std::io::Write)
-    .expect(format!("Failed to open a file for output!"));
+        .expect(format!("ERR: Failed opening output"));
     file.write(output);
 }
 

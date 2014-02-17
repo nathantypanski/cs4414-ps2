@@ -419,20 +419,15 @@ impl Shell {
     }
 
     fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
-        if elem.last && elem.file.is_none() {
-            self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
+        if elem.pipe.is_some() {
+            let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+            Some(elem.iter().fold(left, |left, right| {
+                let right = self.pipe_file(right).expect("Couldn't spawn!");
+                pipe_redirect(left,right)
+            }))
         }
         else {
-            if elem.pipe.is_some() {
-                let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-                Some(elem.iter().fold(left, |left, right| {
-                    let right = self.pipe_file(right).expect("Couldn't spawn!");
-                    pipe_redirect(left,right)
-                }))
-            }
-            else {
-                self.pipe_file(elem)
-            }
+            self.pipe_file(elem)
         }
     }
 
@@ -441,31 +436,27 @@ impl Shell {
             Some(file) => {
                 match file.mode {
                     Read => {
-                        let mut process : ~Process;
-                        if elem.last {
-                            process = self.parse_process(elem.cmd, None, Some(STDOUT_FILENO)).expect("Couldn't spawn!");
-                        } 
-                        else {
-                            process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-                        }
+                        let process = self.to_process(elem).expect("Couldn't spawn!");
                         Some(input_redirect(process, &file.path))
                     }
                     Write => {
-                        let process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+                        let process = self.to_process(elem).expect("Couldn't spawn!");
                         output_redirect(process, &file.path);
                         None
                     }
                 }
             }
             None => {
-                if elem.last {
-                    self.parse_process(elem.cmd, None, Some(STDOUT_FILENO))
-                } 
-                else {
-                    self.parse_process(elem.cmd, None, None)
-                }
+                self.to_process(elem)
             }
         }
+    }
+
+    fn to_process(&mut self, elem : ~LineElem) -> Option<~Process> {
+            self.parse_process(elem.cmd,
+                               None, 
+                               if elem.last { Some(STDOUT_FILENO) }
+                               else { None })
     }
 
     // Determine the type of the current block, and send it to the right

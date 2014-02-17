@@ -11,6 +11,7 @@
 //
 
 extern mod extra;
+use extra::getopts;
 
 use std::{run, os};
 use std::io::buffered::BufferedReader;
@@ -24,11 +25,11 @@ use std::run::Process;
 use std::run::ProcessOptions;
 use std::comm::Port;
 
-use extra::getopts;
-
 use std::libc::types::os::arch::posix88::pid_t;
 use std::libc::consts::os::posix88::{STDOUT_FILENO, STDIN_FILENO};
 use std::libc;
+
+mod helpers;
 
 extern {
   pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;
@@ -434,7 +435,7 @@ impl Shell {
             let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
             Some(elem.iter().fold(left, |left, right| {
                 let right = self.pipe_file(right).expect("Couldn't spawn!");
-                pipe_redirect(left,right)
+                helpers::pipe_redirect(left,right)
             }))
         }
         else {
@@ -450,11 +451,11 @@ impl Shell {
                 match file.mode {
                     Read => {
                         let process = self.to_process(elem).expect("Couldn't spawn!");
-                        Some(input_redirect(process, &file.path))
+                        Some(helpers::input_redirect(process, &file.path))
                     }
                     Write => {
                         let process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
-                        output_redirect(process, &file.path);
+                        helpers::output_redirect(process, &file.path);
                         None
                     }
                 }
@@ -493,7 +494,7 @@ impl Shell {
                      stdin: Option<i32>,
                      stdout:Option<i32>) 
                     -> Option<~Process> {
-        maybe(Cmd::new(cmd_line), |cmd| {
+        helpers::maybe(Cmd::new(cmd_line), |cmd| {
                 if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
                     let mut argv = cmd.argv.to_owned();
                     argv.pop();
@@ -543,7 +544,7 @@ impl Shell {
         dead = ~[];
         let mut i = 0;
         for cmd in self.processes.iter() {
-            borrowed_maybe(&cmd.exit_port, |port| match port.try_recv() {
+            helpers::borrowed_maybe(&cmd.exit_port, |port| match port.try_recv() {
                 Some(_) => {dead.push(i); Some(i)},
                 _ => None,
             });
@@ -678,58 +679,6 @@ fn split_words(words : &str) -> ~[~str] {
         splits.push(words.slice_from(lastword).to_owned());
     }
     splits.iter().map(|x| x.replace("\\n", "\n")).collect()
-}
-
-fn input_redirect(mut process: ~Process, path: &Path) -> ~Process {
-    let file = File::open_mode(path,
-                            std::io::Open,
-                            std::io::Read)
-        .expect(format!("ERR: Failed opening input file"));
-    let file_buffer = &mut BufferedReader::new(file);
-    process.input().write(file_buffer.read_to_end());
-    process
-}
-
-fn write_output_to_file(output : ~[u8],
-                        path : &Path) {
-    let mut file = File::open_mode(path,
-                                    std::io::Truncate,  
-                                    std::io::Write)
-        .expect(format!("ERR: Failed opening output"));
-    file.write(output);
-}
-
-fn output_redirect(mut process : ~Process, path : &Path) -> ~Process {
-    let output = process.finish_with_output();
-    if output.status.success() {
-        write_output_to_file(output.output, path);
-    }
-    process
-}
-
-fn pipe_redirect(mut left: ~Process, mut right: ~Process) -> ~Process {
-    right.input().write(left.finish_with_output().output);
-    left.close_outputs();
-    right
-}
-
-
-// Describes a computation that could fail.
-// If v is Some(...), then f is called on v and the result is returned.
-// Otherwise, None is returned.
-fn maybe<A, B>(v : Option<A>, f : |A| -> Option<B>) -> Option<B> {
-    match v {
-        Some(v) => f(v),
-        None    => None,
-    }
-}
-
-// Same as maybe(v, f), but for &v.
-fn borrowed_maybe<A, B>(v : &Option<A>, f : |&A| -> Option<B>) -> Option<B> {
-    match *v {
-        Some(ref v) => f(v),
-        None    => None,
-    }
 }
 
 fn main() {

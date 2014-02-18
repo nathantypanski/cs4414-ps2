@@ -20,7 +20,7 @@ pub mod shell {
     use shellprocess::fg::FgProcess;
     use shellprocess::bg::BgProcess;
     use parser::parser::{lex,parse};
-    use parser::lineelem::LineElem;
+    use parser::cmd::Cmd;
     use parser::pathtype::{Read, Write};
 
     extern {
@@ -115,7 +115,7 @@ pub mod shell {
             }
         }
 
-        fn run(&mut self, elem : ~LineElem) -> Option<~Process> {
+        fn run(&mut self, elem : ~Cmd) -> Option<~Process> {
             if elem.pipe.is_some() {
                 let left = self.parse_process(elem.clone(), None, None).expect("Couldn't spawn!");
                 Some(elem.iter().fold(left, |left, right| {
@@ -130,7 +130,7 @@ pub mod shell {
 
         // "Pipe" output to or from a file. If no file is available, just return
         // the created process.
-        fn pipe_file(&mut self, elem : ~LineElem) -> Option<~Process> {
+        fn pipe_file(&mut self, elem : ~Cmd) -> Option<~Process> {
             match elem.clone().file {
                 Some(file) => {
                     match file.mode {
@@ -151,9 +151,9 @@ pub mod shell {
             }
         }
 
-        // Make a process from a LineElem. Sets the output to stdout if the "last"
+        // Make a process from a Cmd. Sets the output to stdout if the "last"
         // field is true.
-        fn to_process(&mut self, elem : ~LineElem) -> Option<~Process> {
+        fn to_process(&mut self, elem : ~Cmd) -> Option<~Process> {
                 self.parse_process(elem.clone(),
                                 None, 
                                 if elem.last { Some(STDOUT_FILENO) }
@@ -175,7 +175,7 @@ pub mod shell {
 
         // Parse a new lone process. Background/foreground it appropriately.
         fn parse_process(&mut self,
-                        cmd: ~LineElem,
+                        cmd: ~Cmd,
                         stdin: Option<i32>,
                         stdout:Option<i32>) 
                         -> Option<~Process> {
@@ -191,7 +191,7 @@ pub mod shell {
         }
 
         // background processes.
-        fn make_bg_process(&mut self, cmd : ~LineElem) {
+        fn make_bg_process(&mut self, cmd : ~Cmd) {
             let name = cmd.program.to_owned();
             let mut process = BgProcess::new(cmd);
             match process.run() {

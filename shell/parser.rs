@@ -32,23 +32,23 @@ pub mod pathtype {
     }
 }
 
-pub mod lineelem {
+pub mod cmd {
     use helpers::helpers;
     use super::pathtype::PathType;
     use std::run;
 
     // Represents a parsed element of a pipeline / io redirect.
     #[deriving(Clone)]
-    pub struct LineElem {
+    pub struct Cmd {
         program : ~str,
         argv : ~[~str],
-        pipe: Option<~LineElem>,
+        pipe: Option<~Cmd>,
         file: Option<PathType>,
         last : bool,
     }
-    impl LineElem {
+    impl Cmd {
         #[allow(dead_code)]
-        pub fn new(cmd_name: ~str) -> ~LineElem {
+        pub fn new(cmd_name: ~str) -> ~Cmd {
             let mut argv: ~[~str] = helpers::split_words(cmd_name);
             let mut program : ~str;
             if argv.len() > 0 {
@@ -57,7 +57,7 @@ pub mod lineelem {
             else {
                 program = ~"";
             }
-            ~LineElem {
+            ~Cmd {
                 program: program,
                 argv: argv,
                 pipe: None,
@@ -66,25 +66,20 @@ pub mod lineelem {
             }
         }
 
-        pub fn cmd_exists(cmd : LineElem) -> Option<LineElem> {
-            let ret = run::process_output("which", [cmd.program.to_owned()]);
-            if (ret.expect("exit code error.").status.success()) {
-                Some(cmd)
-            }
-            else {
-                None
-            }
+        pub fn exists(&mut self) -> bool {
+            let ret = run::process_output("which", [self.program.to_owned()]);
+            ret.expect("exit code error.").status.success()
         }
 
         // Set the path at the bottom of the pipe chain. This means e.g. in order
         // to set an input path, it needs to happen *before* any pipes are tied
-        // to this LineElem.
+        // to this Cmd.
         #[allow(dead_code)]
-        pub fn set_path(&self, path: PathType) -> ~LineElem {
+        pub fn set_path(&self, path: PathType) -> ~Cmd {
             let this_pipe = self.pipe.clone();
             match this_pipe {
                 Some(elem) => {
-                    ~LineElem {
+                    ~Cmd {
                         program: self.program.to_owned(), 
                         argv: self.argv.to_owned(), 
                         pipe: Some(elem.set_path(path)),
@@ -93,7 +88,7 @@ pub mod lineelem {
                     }
                 }
                 None => {
-                    ~LineElem {
+                    ~Cmd {
                         program: self.program.to_owned(), 
                         argv: self.argv.to_owned(), 
                         pipe: self.pipe.clone(),
@@ -104,14 +99,14 @@ pub mod lineelem {
             }
         }
 
-        // Tie a new pipe to this LineElem. If a pipeline already exists, add
+        // Tie a new pipe to this Cmd. If a pipeline already exists, add
         // the pipe to the bottom of the pipeline.
         #[allow(dead_code)]
-        pub fn set_pipe(&self, pipe: ~LineElem) -> ~LineElem {
+        pub fn set_pipe(&self, pipe: ~Cmd) -> ~Cmd {
             let this_pipe = self.pipe.clone();
             match this_pipe {
                 Some(elem) => {
-                    ~LineElem {
+                    ~Cmd {
                         program: self.program.to_owned(), 
                         argv: self.argv.to_owned(), 
                         pipe: Some(elem.set_pipe(pipe)),
@@ -120,7 +115,7 @@ pub mod lineelem {
                     }
                 }
                 None => {
-                    ~LineElem {
+                    ~Cmd {
                         program: self.program.to_owned(), 
                         argv: self.argv.to_owned(), 
                         pipe: Some(pipe), 
@@ -132,14 +127,14 @@ pub mod lineelem {
         }
         
         #[allow(dead_code)]
-        pub fn iter(&self) -> ~LineElem {
+        pub fn iter(&self) -> ~Cmd {
         ~self.clone()
         }
     }
 
-    impl Iterator<~LineElem> for LineElem {
+    impl Iterator<~Cmd> for Cmd {
         #[allow(dead_code)]
-        fn next(&mut self) -> Option<~LineElem> {
+        fn next(&mut self) -> Option<~Cmd> {
             let pipe = self.pipe.clone();
             match self.pipe.clone() {
                 Some(pipe) => {
@@ -154,7 +149,7 @@ pub mod lineelem {
 
 #[allow(dead_code)]
 pub mod parser {
-    use super::lineelem::LineElem;
+    use super::cmd::Cmd;
     use super::pathtype::{PathType, Read, Write};
     // Split the input up into words.
     pub fn lex(cmd_line: &str) -> ~[~str] {
@@ -186,10 +181,10 @@ pub mod parser {
     }
 
     // Parse the lexxed input into a (recursive linked by .pipe field) 
-    // list of LineElems.
-    pub fn parse(words: ~[~str]) -> ~LineElem {
+    // list of Cmds.
+    pub fn parse(words: ~[~str]) -> ~Cmd {
         let breakchars = ~['>', '<', '|'];
-        let mut slices : ~[~LineElem] = ~[];
+        let mut slices : ~[~Cmd] = ~[];
         let mut in_file = false;
         let mut out_file = false;
         let mut pipe = false;
@@ -219,11 +214,11 @@ pub mod parser {
                 }
                 else if pipe {
                     let cmd = slices.pop();
-                    slices.push(cmd.set_pipe(LineElem::new(words[i].to_owned())));
+                    slices.push(cmd.set_pipe(Cmd::new(words[i].to_owned())));
                     pipe = false;
                 }
                 else {
-                    slices.push(LineElem::new(words[i].to_owned()));
+                    slices.push(Cmd::new(words[i].to_owned()));
                 }
             }
         }

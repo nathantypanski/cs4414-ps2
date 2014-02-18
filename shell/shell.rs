@@ -11,16 +11,16 @@ pub mod shell {
     use std::io::signal::{Listener, Interrupt};
     use std::task::try;
 
-    use std::libc::consts::os::posix88::{STDOUT_FILENO, STDIN_FILENO};
-    use std::libc::types::os::arch::posix88::pid_t;
-    use std::libc;
-
     use helpers::helpers::{split_words, input_redirect, output_redirect, pipe_redirect};
     use functional::borrowed_maybe;
     use shellprocess::fg::FgProcess;
     use shellprocess::bg::BgProcess;
     use parser::cmd::Cmd;
     use parser::pathtype::{Read, Write};
+    
+    use std::libc::consts::os::posix88::{STDOUT_FILENO, STDIN_FILENO};
+    use std::libc::types::os::arch::posix88::pid_t;
+    use std::libc;
 
     extern {
         pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;

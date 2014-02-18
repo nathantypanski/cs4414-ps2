@@ -1,10 +1,7 @@
-mod helpers;
-mod lineelem;
-mod shellprocess;
-mod cmd;
-mod parser;
-#[ path="../functional.rs"]
-mod functional;
+#[ path="../functional.rs"] mod functional;
+#[ path="helpers.rs"]       mod helpers;
+#[ path="shellprocess.rs"]  mod shellprocess;
+#[ path="parser.rs"]        mod parser;
 
 pub mod shell {
     use std::run::Process;
@@ -19,15 +16,15 @@ pub mod shell {
     use std::libc;
 
     use helpers::helpers::{split_words, input_redirect, output_redirect, pipe_redirect};
-    use functional::functional::{maybe, borrowed_maybe};
+    use functional::{maybe, borrowed_maybe};
     use shellprocess::fg::FgProcess;
     use shellprocess::bg::BgProcess;
-    use cmd::cmd::Cmd;
+    use shellprocess::cmd::Cmd;
     use parser::parser::{lex,parse};
-    pub use lineelem::{LineElem, Read, Write};
+    use parser::lineelem::{LineElem, Read, Write};
 
     extern {
-    pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;
+        pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;
     }
 
     pub struct Shell {

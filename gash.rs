@@ -16,21 +16,11 @@ extern mod extra;
 use shell::shell::Shell;
 use helpers::helpers::get_cmdline_from_args;
 
-#[ path = "./functional.rs" ]
-mod functional;
-
-#[ path = "shell/shellprocess.rs" ]
-mod shellprocess;
-#[ path = "shell/lineelem.rs" ]
-mod lineelem;
-#[ path = "shell/parser.rs" ]
-mod parser;
-#[ path = "shell/helpers.rs" ]
-mod helpers;
-#[ path = "shell/cmd.rs" ]
-mod cmd;
-#[ path = "shell/shell.rs" ]
-mod shell;
+#[ path = "shell/shell.rs" ]     mod shell;
+#[ path = "shell/helpers.rs" ]   mod helpers;
+#[ path="functional.rs"]         mod functional;
+#[ path="shell/shellprocess.rs"] mod shellprocess;
+#[ path="shell/parser.rs"]       mod parser;
 
 fn main() {
     let opt_cmd_line = get_cmdline_from_args();

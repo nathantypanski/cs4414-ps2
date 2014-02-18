@@ -1,27 +1,31 @@
-//
-// gash.rs
+// gash - a shell written in Rust
 // by Nathan Typanski
 //
-// Starting code for PS2
 // Running on Rust 0.9
 //
-// University of Virginia - cs4414 Spring 2014
-// Weilin Xu, David Evans
-// Version 0.4
-//
-
+// Course information:
+//     University of Virginia - cs4414 Spring 2014
+//     Weilin Xu, David Evans
+//     Version 0.4
+#[ crate_id = "gash" ];
+#[ desc = "A shell written in Rust." ];
+#[ license = "MIT" ];
+#[ warn(non_camel_case_types) ];
 extern mod extra;
 
-use shell::{Shell};
+use shell::shell::Shell;
+use helpers::helpers::get_cmdline_from_args;
 
 mod shellprocess;
 mod lineelem;
+mod functional;
+mod parser;
 mod helpers;
 mod cmd;
 mod shell;
 
 fn main() {
-    let opt_cmd_line = helpers::get_cmdline_from_args();
+    let opt_cmd_line = get_cmdline_from_args();
     
     match opt_cmd_line {
         Some(cmd_line) => {

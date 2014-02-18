@@ -100,7 +100,7 @@ impl LineElem {
     
     #[allow(dead_code)]
     pub fn iter(&self) -> ~LineElem {
-       ~self.clone()
+    ~self.clone()
     }
 }
 

@@ -1,9 +1,9 @@
+#[allow(dead_code)]
 pub mod fg{
     use std::run::Process;
     use std::run::ProcessOptions;
     // A foreground process is a command, arguments, and file descriptors for its
     // input and output.
-    #[allow(dead_code)]
     pub struct FgProcess {
         command     : ~str,
         args        : ~[~str],
@@ -11,7 +11,6 @@ pub mod fg{
         stdout      : Option<i32>,
     }
     impl FgProcess {
-        #[allow(dead_code)]
         pub fn new(program : ~str, argv: ~[~str],
             stdin : Option<i32>, stdout : Option<i32>) 
             -> FgProcess
@@ -24,7 +23,6 @@ pub mod fg{
             }
         }
         
-        #[allow(dead_code)]
         pub fn run(&mut self) -> Process {
             let command = self.command.to_owned();
             let args = self.args.to_owned();
@@ -44,12 +42,12 @@ pub mod fg{
 // we need to keep track of an ProcessExit port for determining whether a
 // process has finished running, as well as a pid for the process (for killing
 // it when the shell terminates).
+#[allow(dead_code)]
 pub mod bg {
     use std::run::Process;
     use std::run::ProcessOptions;
     use std::io::process::ProcessExit;
     use std::libc::types::os::arch::posix88::pid_t;
-    #[allow(dead_code)]
     pub struct BgProcess {
         command      : ~str,
         args         : ~[~str],
@@ -59,7 +57,6 @@ pub mod bg {
         stdout      : Option<i32>,
     }
     impl BgProcess {
-        #[allow(dead_code)]
         pub fn new(program : ~str, argv: ~[~str]) -> BgProcess {
             BgProcess {
                 command: program.to_owned(),
@@ -71,7 +68,6 @@ pub mod bg {
             }
         }
 
-        #[allow(dead_code)]
         pub fn run(&mut self) -> Option<pid_t> {
             // Process exit ports; used for checking dead status.
             let (port, chan): (Port<ProcessExit>, Chan<ProcessExit>) = Chan::new();

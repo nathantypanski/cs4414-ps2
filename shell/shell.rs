@@ -2,8 +2,9 @@ mod helpers;
 mod lineelem;
 mod shellprocess;
 mod cmd;
-mod functional;
 mod parser;
+#[ path="../functional.rs"]
+mod functional;
 
 pub mod shell {
     use std::run::Process;
@@ -19,11 +20,11 @@ pub mod shell {
 
     use helpers::helpers::{split_words, input_redirect, output_redirect, pipe_redirect};
     use functional::functional::{maybe, borrowed_maybe};
-    use parser::parser::{lex,parse};
     use shellprocess::fg::FgProcess;
     use shellprocess::bg::BgProcess;
     use cmd::cmd::Cmd;
-    use lineelem::{LineElem, Read, Write};
+    use parser::parser::{lex,parse};
+    pub use lineelem::{LineElem, Read, Write};
 
     extern {
     pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;

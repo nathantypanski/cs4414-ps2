@@ -2,7 +2,7 @@ mod lineelem;
 
 #[allow(dead_code)]
 pub mod parser {
-    use lineelem::{LineElem, PathType, Read, Write};
+    pub use lineelem::{LineElem, PathType, Read, Write};
     // Split the input up into words.
     pub fn lex(cmd_line: &str) -> ~[~str] {
         let breakchars = ~['>', '<', '|'];

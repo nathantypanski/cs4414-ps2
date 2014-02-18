@@ -32,9 +32,10 @@ pub mod pathtype {
     }
 }
 
+#[allow(dead_code)]
 pub mod cmd {
     use helpers::helpers;
-    use super::pathtype::PathType;
+    use super::pathtype::{PathType, Read, Write};
     use std::run;
 
     // Represents a parsed element of a pipeline / io redirect.
@@ -47,8 +48,12 @@ pub mod cmd {
         last : bool,
     }
     impl Cmd {
+        pub fn new(cmd_line: &str) -> ~Cmd {
+            parse(lex(cmd_line))
+        }
+
         #[allow(dead_code)]
-        pub fn new(cmd_name: ~str) -> ~Cmd {
+        fn _new(cmd_name: ~str) -> ~Cmd {
             let mut argv: ~[~str] = helpers::split_words(cmd_name);
             let mut program : ~str;
             if argv.len() > 0 {
@@ -145,12 +150,7 @@ pub mod cmd {
             pipe
         }
     }
-}
 
-#[allow(dead_code)]
-pub mod parser {
-    use super::cmd::Cmd;
-    use super::pathtype::{PathType, Read, Write};
     // Split the input up into words.
     pub fn lex(cmd_line: &str) -> ~[~str] {
         let breakchars = ~['>', '<', '|'];
@@ -214,11 +214,11 @@ pub mod parser {
                 }
                 else if pipe {
                     let cmd = slices.pop();
-                    slices.push(cmd.set_pipe(Cmd::new(words[i].to_owned())));
+                    slices.push(cmd.set_pipe(Cmd::_new(words[i].to_owned())));
                     pipe = false;
                 }
                 else {
-                    slices.push(Cmd::new(words[i].to_owned()));
+                    slices.push(Cmd::_new(words[i].to_owned()));
                 }
             }
         }

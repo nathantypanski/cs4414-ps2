@@ -19,7 +19,6 @@ pub mod shell {
     use functional::borrowed_maybe;
     use shellprocess::fg::FgProcess;
     use shellprocess::bg::BgProcess;
-    use parser::parser::{lex,parse};
     use parser::cmd::Cmd;
     use parser::pathtype::{Read, Write};
 
@@ -163,13 +162,12 @@ pub mod shell {
         // Determine the type of the current block, and send it to the right
         // parsing function.
         pub fn run_cmdline(&mut self, cmd_line: &str) {
-            let lex = lex(cmd_line);
-            let parse = parse(lex);
-            if parse.pipe.is_none() && parse.file.is_none() {
-                self.parse_process(parse, Some(STDIN_FILENO), Some(STDOUT_FILENO));
+            let cmd = Cmd::new(cmd_line);
+            if cmd.pipe.is_none() && cmd.file.is_none() {
+                self.parse_process(cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO));
             }
             else {
-                self.run(parse);
+                self.run(cmd);
             }
         }
 

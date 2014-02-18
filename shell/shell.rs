@@ -180,21 +180,20 @@ pub mod shell {
             if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
                 let mut argv = cmd.argv.to_owned();
                 argv.pop();
-                self.make_bg_process(cmd);
+                self.make_bg_process(cmd.program.to_owned(), cmd.argv);
                 None
             }
             else {
-                Some(~(FgProcess::new(cmd, stdin, stdout).run()))
+                Some(~(FgProcess::new(cmd.program.to_owned(), cmd.argv, stdin, stdout).run()))
             }
         }
 
         // background processes.
-        fn make_bg_process(&mut self, cmd : ~Cmd) {
-            let name = cmd.program.to_owned();
-            let mut process = BgProcess::new(cmd);
+        fn make_bg_process(&mut self, cmd: ~str, argv: ~[~str]) {
+            let mut process = BgProcess::new(cmd.to_owned(), argv);
             match process.run() {
                 Some(pid) => {
-                    println!("{:s} {:i}", name, pid);
+                    println!("{:s} {:i}", cmd, pid);
                     self.processes.push(~process);
                 }
                 None => {

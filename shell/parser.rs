@@ -152,7 +152,7 @@ pub mod cmd {
     }
 
     // Split the input up into words.
-    pub fn lex(cmd_line: &str) -> ~[~str] {
+    fn lex(cmd_line: &str) -> ~[~str] {
         let breakchars = ~['>', '<', '|'];
         let mut slices : ~[~str] = ~[];
         let mut last = 0;
@@ -182,7 +182,7 @@ pub mod cmd {
 
     // Parse the lexxed input into a (recursive linked by .pipe field) 
     // list of Cmds.
-    pub fn parse(words: ~[~str]) -> ~Cmd {
+    fn parse(words: ~[~str]) -> ~Cmd {
         let breakchars = ~['>', '<', '|'];
         let mut slices : ~[~Cmd] = ~[];
         let mut in_file = false;

@@ -1,6 +1,4 @@
-mod parser;
 pub mod fg{
-    use parser::cmd::Cmd;
     use std::run::Process;
     use std::run::ProcessOptions;
     // A foreground process is a command, arguments, and file descriptors for its
@@ -14,14 +12,13 @@ pub mod fg{
     }
     impl FgProcess {
         #[allow(dead_code)]
-        pub fn new(cmd : ~Cmd,
-            stdin : Option<i32>,
-            stdout : Option<i32>) 
+        pub fn new(program : ~str, argv: ~[~str],
+            stdin : Option<i32>, stdout : Option<i32>) 
             -> FgProcess
         {
             FgProcess {
-                command     : cmd.program.to_owned(),
-                args        : cmd.argv.to_owned(),
+                command     : program.to_owned(),
+                args        : argv.to_owned(),
                 stdin       : stdin,
                 stdout      : stdout,
             }
@@ -48,7 +45,6 @@ pub mod fg{
 // process has finished running, as well as a pid for the process (for killing
 // it when the shell terminates).
 pub mod bg {
-    use parser::cmd::Cmd;
     use std::run::Process;
     use std::run::ProcessOptions;
     use std::io::process::ProcessExit;
@@ -64,10 +60,10 @@ pub mod bg {
     }
     impl BgProcess {
         #[allow(dead_code)]
-        pub fn new(cmd : ~Cmd) -> BgProcess {
+        pub fn new(program : ~str, argv: ~[~str]) -> BgProcess {
             BgProcess {
-                command: cmd.program.to_owned(),
-                args: cmd.argv.to_owned(),
+                command: program.to_owned(),
+                args: argv.to_owned(),
                 exit_port: None,
                 pid: None,
                 stdin: None,

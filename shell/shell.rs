@@ -19,7 +19,6 @@ pub mod shell {
     use functional::{maybe, borrowed_maybe};
     use shellprocess::fg::FgProcess;
     use shellprocess::bg::BgProcess;
-    use parser::cmd::Cmd;
     use parser::parser::{lex,parse};
     use parser::lineelem::{LineElem, Read, Write};
 
@@ -117,7 +116,7 @@ pub mod shell {
 
         fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
             if elem.pipe.is_some() {
-                let left = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+                let left = self.parse_process(elem.clone(), None, None).expect("Couldn't spawn!");
                 Some(elem.iter().fold(left, |left, right| {
                     let right = self.pipe_file(right).expect("Couldn't spawn!");
                     pipe_redirect(left,right)
@@ -139,7 +138,7 @@ pub mod shell {
                             Some(input_redirect(process, &file.path))
                         }
                         Write => {
-                            let process = self.parse_process(elem.cmd, None, None).expect("Couldn't spawn!");
+                            let process = self.parse_process(elem, None, None).expect("Couldn't spawn!");
                             output_redirect(process, &file.path);
                             None
                         }
@@ -154,7 +153,7 @@ pub mod shell {
         // Make a process from a LineElem. Sets the output to stdout if the "last"
         // field is true.
         fn to_process(&mut self, elem : ~LineElem) -> Option<~Process> {
-                self.parse_process(elem.cmd,
+                self.parse_process(elem.clone(),
                                 None, 
                                 if elem.last { Some(STDOUT_FILENO) }
                                 else { None })
@@ -166,7 +165,7 @@ pub mod shell {
             let lex = lex(cmd_line);
             let parse = parse(lex);
             if parse.pipe.is_none() && parse.file.is_none() {
-                self.parse_process(parse.cmd, Some(STDIN_FILENO), Some(STDOUT_FILENO));
+                self.parse_process(parse, Some(STDIN_FILENO), Some(STDOUT_FILENO));
             }
             else {
                 self._run(parse);
@@ -175,27 +174,23 @@ pub mod shell {
 
         // Parse a new lone process. Background/foreground it appropriately.
         fn parse_process(&mut self,
-                        cmd_line : &str,
+                        cmd: ~LineElem,
                         stdin: Option<i32>,
                         stdout:Option<i32>) 
                         -> Option<~Process> {
-            maybe(Cmd::new(cmd_line), |cmd| {
-                    if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
-                        let mut argv = cmd.argv.to_owned();
-                        argv.pop();
-                        self.make_bg_process(Cmd{
-                            program:cmd.program,
-                            argv:argv});
-                        None
-                    }
-                    else {
-                        Some(~(FgProcess::new(cmd, stdin, stdout).run()))
-                    }
-            })
+            if (cmd.argv.len() > 0 && cmd.argv.last() == &~"&") {
+                let mut argv = cmd.argv.to_owned();
+                argv.pop();
+                self.make_bg_process(cmd);
+                None
+            }
+            else {
+                Some(~(FgProcess::new(cmd, stdin, stdout).run()))
+            }
         }
 
         // background processes.
-        fn make_bg_process(&mut self, cmd : Cmd) {
+        fn make_bg_process(&mut self, cmd : ~LineElem) {
             let name = cmd.program.to_owned();
             let mut process = BgProcess::new(cmd);
             match process.run() {

@@ -1,47 +1,9 @@
 #[ path="helpers.rs"] mod helpers;
 
-// The basic unit for a command that could be run.
-pub mod cmd {
+pub mod lineelem {
     use helpers::helpers;
     use std::run;
-    #[deriving(Clone)]
-    pub struct Cmd {
-        program : ~str,
-        argv : ~[~str],
-    }
 
-    impl Cmd {
-        // Make a new command. Handles splitting the input into words.
-        #[allow(dead_code)]
-        pub fn new(cmd_name: &str) -> Option<Cmd> {
-            let mut argv: ~[~str] = helpers::split_words(cmd_name);
-            if argv.len() > 0 {
-                let program: ~str = argv.remove(0);
-                cmd_exists(Cmd {
-                    program : program,
-                    argv : argv,
-                })
-            }
-            else {
-                None
-            }
-        }
-    }
-    // Determine whether a command exists using "which".
-    #[allow(dead_code)]
-    pub fn cmd_exists(cmd : Cmd) -> Option<Cmd> {
-        let ret = run::process_output("which", [cmd.program.to_owned()]);
-        if (ret.expect("exit code error.").status.success()) {
-            Some(cmd)
-        }
-        else {
-            None
-        }
-    }
-}
-
-
-pub mod lineelem {
     pub struct PathType {
         path: Path,
         mode: FilePermission,
@@ -75,19 +37,39 @@ pub mod lineelem {
     // Represents a parsed element of a pipeline / io redirect.
     #[deriving(Clone)]
     pub struct LineElem {
-        cmd: ~str,
+        program : ~str,
+        argv : ~[~str],
         pipe: Option<~LineElem>,
         file: Option<PathType>,
         last : bool,
     }
     impl LineElem {
         #[allow(dead_code)]
-        pub fn new(cmd: ~str) -> ~LineElem {
+        pub fn new(cmd_name: ~str) -> ~LineElem {
+            let mut argv: ~[~str] = helpers::split_words(cmd_name);
+            let mut program : ~str;
+            if argv.len() > 0 {
+                program = argv.remove(0);
+            }
+            else {
+                program = ~"";
+            }
             ~LineElem {
-                cmd: cmd.to_owned(),
+                program: program,
+                argv: argv,
                 pipe: None,
                 file: None,
                 last: true,
+            }
+        }
+
+        pub fn cmd_exists(cmd : LineElem) -> Option<LineElem> {
+            let ret = run::process_output("which", [cmd.program.to_owned()]);
+            if (ret.expect("exit code error.").status.success()) {
+                Some(cmd)
+            }
+            else {
+                None
             }
         }
 
@@ -100,7 +82,8 @@ pub mod lineelem {
             match this_pipe {
                 Some(elem) => {
                     ~LineElem {
-                        cmd: self.cmd.to_owned(), 
+                        program: self.program.to_owned(), 
+                        argv: self.argv.to_owned(), 
                         pipe: Some(elem.set_path(path)),
                         file: self.file.clone(),
                         last: self.last,
@@ -108,7 +91,8 @@ pub mod lineelem {
                 }
                 None => {
                     ~LineElem {
-                        cmd: self.cmd.to_owned(), 
+                        program: self.program.to_owned(), 
+                        argv: self.argv.to_owned(), 
                         pipe: self.pipe.clone(),
                         file: Some(path),
                         last: self.last,
@@ -125,7 +109,8 @@ pub mod lineelem {
             match this_pipe {
                 Some(elem) => {
                     ~LineElem {
-                        cmd: self.cmd.to_owned(), 
+                        program: self.program.to_owned(), 
+                        argv: self.argv.to_owned(), 
                         pipe: Some(elem.set_pipe(pipe)),
                         file: self.file.clone(),
                         last: false,
@@ -133,7 +118,8 @@ pub mod lineelem {
                 }
                 None => {
                     ~LineElem {
-                        cmd: self.cmd.to_owned(), 
+                        program: self.program.to_owned(), 
+                        argv: self.argv.to_owned(), 
                         pipe: Some(pipe), 
                         file: self.file.clone(),
                         last: false,

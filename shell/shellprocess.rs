@@ -1,6 +1,6 @@
 mod parser;
 pub mod fg{
-    use parser::cmd::Cmd;
+    use parser::lineelem::LineElem;
     use std::run::Process;
     use std::run::ProcessOptions;
     // A foreground process is a command, arguments, and file descriptors for its
@@ -14,7 +14,7 @@ pub mod fg{
     }
     impl FgProcess {
         #[allow(dead_code)]
-        pub fn new(cmd : Cmd,
+        pub fn new(cmd : ~LineElem,
             stdin : Option<i32>,
             stdout : Option<i32>) 
             -> FgProcess
@@ -48,7 +48,7 @@ pub mod fg{
 // process has finished running, as well as a pid for the process (for killing
 // it when the shell terminates).
 pub mod bg {
-    use parser::cmd::Cmd;
+    use parser::lineelem::LineElem;
     use std::run::Process;
     use std::run::ProcessOptions;
     use std::io::process::ProcessExit;
@@ -64,7 +64,7 @@ pub mod bg {
     }
     impl BgProcess {
         #[allow(dead_code)]
-        pub fn new(cmd : Cmd) -> BgProcess {
+        pub fn new(cmd : ~LineElem) -> BgProcess {
             BgProcess {
                 command: cmd.program.to_owned(),
                 args: cmd.argv.to_owned(),

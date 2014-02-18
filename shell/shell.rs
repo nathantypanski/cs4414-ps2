@@ -19,7 +19,7 @@ pub mod shell {
     use functional::{maybe, borrowed_maybe};
     use shellprocess::fg::FgProcess;
     use shellprocess::bg::BgProcess;
-    use shellprocess::cmd::Cmd;
+    use parser::cmd::Cmd;
     use parser::parser::{lex,parse};
     use parser::lineelem::{LineElem, Read, Write};
 

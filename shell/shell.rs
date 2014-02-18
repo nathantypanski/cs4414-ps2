@@ -115,7 +115,7 @@ pub mod shell {
             }
         }
 
-        fn _run(&mut self, elem : ~LineElem) -> Option<~Process> {
+        fn run(&mut self, elem : ~LineElem) -> Option<~Process> {
             if elem.pipe.is_some() {
                 let left = self.parse_process(elem.clone(), None, None).expect("Couldn't spawn!");
                 Some(elem.iter().fold(left, |left, right| {
@@ -169,7 +169,7 @@ pub mod shell {
                 self.parse_process(parse, Some(STDIN_FILENO), Some(STDOUT_FILENO));
             }
             else {
-                self._run(parse);
+                self.run(parse);
             }
         }
 

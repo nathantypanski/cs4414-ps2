@@ -1,9 +1,6 @@
 #[ path="helpers.rs"] mod helpers;
 
-pub mod lineelem {
-    use helpers::helpers;
-    use std::run;
-
+pub mod pathtype {
     pub struct PathType {
         path: Path,
         mode: FilePermission,
@@ -11,7 +8,7 @@ pub mod lineelem {
 
     impl PathType{
         #[allow(dead_code)]
-        pub fn new(path: ~str, mode: FilePermission) -> PathType{
+        pub fn new(path: ~str, mode: FilePermission) -> PathType {
             let path = Path::new(path);
             PathType{
                 path: path,
@@ -33,6 +30,12 @@ pub mod lineelem {
         Read,
         Write,
     }
+}
+
+pub mod lineelem {
+    use helpers::helpers;
+    use super::pathtype::PathType;
+    use std::run;
 
     // Represents a parsed element of a pipeline / io redirect.
     #[deriving(Clone)]
@@ -151,7 +154,8 @@ pub mod lineelem {
 
 #[allow(dead_code)]
 pub mod parser {
-    pub use super::lineelem::{LineElem, PathType, Read, Write};
+    use super::lineelem::LineElem;
+    use super::pathtype::{PathType, Read, Write};
     // Split the input up into words.
     pub fn lex(cmd_line: &str) -> ~[~str] {
         let breakchars = ~['>', '<', '|'];

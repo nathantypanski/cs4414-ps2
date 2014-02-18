@@ -16,11 +16,12 @@ pub mod shell {
     use std::libc;
 
     use helpers::helpers::{split_words, input_redirect, output_redirect, pipe_redirect};
-    use functional::{maybe, borrowed_maybe};
+    use functional::borrowed_maybe;
     use shellprocess::fg::FgProcess;
     use shellprocess::bg::BgProcess;
     use parser::parser::{lex,parse};
-    use parser::lineelem::{LineElem, Read, Write};
+    use parser::lineelem::LineElem;
+    use parser::pathtype::{Read, Write};
 
     extern {
         pub fn kill(pid: pid_t, sig: libc::c_int) -> libc::c_int;

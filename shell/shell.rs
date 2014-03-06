@@ -276,8 +276,7 @@ pub mod shell {
             let mut argv: ~[~str] = split_words(cmd_line);
             if argv.len() > 0 {
                 argv.remove(0);
-                let path = Path::new(argv[0]);
-                os::change_dir(&path);
+                os::change_dir(&Path::new(argv[0]));
             }
         }
     }

@@ -50,7 +50,6 @@ pub mod helpers {
         splits.iter().map(|x| x.replace("\\n", "\n")).collect()
     }
 
-    #[allow(dead_code)]
     pub fn input_redirect(mut process: ~Process, path: &Path) -> ~Process {
         let file = File::open_mode(path, Open, Read)
             .expect(format!("ERR: Failed opening input file"));
@@ -59,7 +58,6 @@ pub mod helpers {
         process
     }
 
-    #[allow(dead_code)]
     pub fn write_output_to_file(output : ~[u8],
                             path : &Path) {
         let mut file = File::open_mode(path,
@@ -69,7 +67,6 @@ pub mod helpers {
         file.write(output);
     }
 
-    #[allow(dead_code)]
     pub fn output_redirect(mut process : ~Process, path : &Path) -> ~Process {
         let output = process.finish_with_output();
         if output.status.success() {
@@ -78,7 +75,6 @@ pub mod helpers {
         process
     }
 
-    #[allow(dead_code)]
     pub fn pipe_redirect(mut left: ~Process, mut right: ~Process) -> ~Process {
         right.input().write(left.finish_with_output().output);
         left.close_outputs();
@@ -86,7 +82,6 @@ pub mod helpers {
     }
 
     // Begin processing program arguments and initiate the parameters.
-    #[allow(dead_code)]
     pub fn get_cmdline_from_args() -> Option<~str> {
         let args = os::args();
         

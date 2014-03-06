@@ -1,52 +1,12 @@
-#[ path="helpers.rs"] mod helpers;
-
-// The basic unit for a command that could be run.
-pub mod cmd {
-    use helpers::helpers;
-    use std::run;
-    #[deriving(Clone)]
-    pub struct Cmd {
-        program : ~str,
-        argv : ~[~str],
-    }
-
-    impl Cmd {
-        // Make a new command. Handles splitting the input into words.
-        #[allow(dead_code)]
-        pub fn new(cmd_name: &str) -> Option<Cmd> {
-            let mut argv: ~[~str] = helpers::split_words(cmd_name);
-            if argv.len() > 0 {
-                let program: ~str = argv.remove(0);
-                cmd_exists(Cmd {
-                    program : program,
-                    argv : argv,
-                })
-            }
-            else {
-                None
-            }
-        }
-    }
-    // Determine whether a command exists using "which".
-    #[allow(dead_code)]
-    pub fn cmd_exists(cmd : Cmd) -> Option<Cmd> {
-        let ret = run::process_output("which", [cmd.program.to_owned()]);
-        if (ret.expect("exit code error.").status.success()) {
-            Some(cmd)
-        }
-        else {
-            None
-        }
-    }
-}
-
+#[allow(dead_code)]
 pub mod fg{
-    use super::cmd::Cmd;
     use std::run::Process;
     use std::run::ProcessOptions;
     // A foreground process is a command, arguments, and file descriptors for its
     // input and output.
-    #[allow(dead_code)]
+    
+    // Note: std::run is replaced with std::io::process in the latest Rust
+    // release.
     pub struct FgProcess {
         command     : ~str,
         args        : ~[~str],
@@ -54,21 +14,18 @@ pub mod fg{
         stdout      : Option<i32>,
     }
     impl FgProcess {
-        #[allow(dead_code)]
-        pub fn new(cmd : Cmd,
-            stdin : Option<i32>,
-            stdout : Option<i32>) 
+        pub fn new(program : ~str, argv: ~[~str],
+            stdin : Option<i32>, stdout : Option<i32>) 
             -> FgProcess
         {
             FgProcess {
-                command     : cmd.program.to_owned(),
-                args        : cmd.argv.to_owned(),
+                command     : program.to_owned(),
+                args        : argv.to_owned(),
                 stdin       : stdin,
                 stdout      : stdout,
             }
         }
         
-        #[allow(dead_code)]
         pub fn run(&mut self) -> Process {
             let command = self.command.to_owned();
             let args = self.args.to_owned();
@@ -84,17 +41,19 @@ pub mod fg{
     }
 }
 
-// Background processes are handled differently, but not *that* differently:
-// we need to keep track of an ProcessExit port for determining whether a
-// process has finished running, as well as a pid for the process (for killing
-// it when the shell terminates).
+#[allow(dead_code)]
 pub mod bg {
-    use super::cmd::Cmd;
+    // Background processes are handled differently, but not *that* differently:
+    // we need to keep track of an ProcessExit port for determining whether a
+    // process has finished running, as well as a pid for the process (for killing
+    // it when the shell terminates).
+
+    // Note: std::run is replaced with std::io::process in the latest Rust
+    // release.
     use std::run::Process;
     use std::run::ProcessOptions;
     use std::io::process::ProcessExit;
     use std::libc::types::os::arch::posix88::pid_t;
-    #[allow(dead_code)]
     pub struct BgProcess {
         command      : ~str,
         args         : ~[~str],
@@ -104,11 +63,10 @@ pub mod bg {
         stdout      : Option<i32>,
     }
     impl BgProcess {
-        #[allow(dead_code)]
-        pub fn new(cmd : Cmd) -> BgProcess {
+        pub fn new(program : ~str, argv: ~[~str]) -> BgProcess {
             BgProcess {
-                command: cmd.program.to_owned(),
-                args: cmd.argv.to_owned(),
+                command: program.to_owned(),
+                args: argv.to_owned(),
                 exit_port: None,
                 pid: None,
                 stdin: None,
@@ -116,7 +74,6 @@ pub mod bg {
             }
         }
 
-        #[allow(dead_code)]
         pub fn run(&mut self) -> Option<pid_t> {
             // Process exit ports; used for checking dead status.
             let (port, chan): (Port<ProcessExit>, Chan<ProcessExit>) = Chan::new();

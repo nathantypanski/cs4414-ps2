@@ -4,6 +4,9 @@ pub mod fg{
     use std::run::ProcessOptions;
     // A foreground process is a command, arguments, and file descriptors for its
     // input and output.
+    
+    // Note: std::run is replaced with std::io::process in the latest Rust
+    // release.
     pub struct FgProcess {
         command     : ~str,
         args        : ~[~str],
@@ -38,12 +41,15 @@ pub mod fg{
     }
 }
 
-// Background processes are handled differently, but not *that* differently:
-// we need to keep track of an ProcessExit port for determining whether a
-// process has finished running, as well as a pid for the process (for killing
-// it when the shell terminates).
 #[allow(dead_code)]
 pub mod bg {
+    // Background processes are handled differently, but not *that* differently:
+    // we need to keep track of an ProcessExit port for determining whether a
+    // process has finished running, as well as a pid for the process (for killing
+    // it when the shell terminates).
+
+    // Note: std::run is replaced with std::io::process in the latest Rust
+    // release.
     use std::run::Process;
     use std::run::ProcessOptions;
     use std::io::process::ProcessExit;
